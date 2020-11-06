@@ -1,14 +1,24 @@
 #include "ooo_cpu.h"
+#include <cmath>
 
-#define BIMODAL_TABLE_SIZE 16384
-#define BIMODAL_PRIME 16381
+// #define BIMODAL_TABLE_SIZE 16384
+// #define BIMODAL_PRIME 16381
+// #define BIMODAL_TABLE_SIZE 524288
+
+#define BIMODAL_SIZE_KBYTE 8
+#define BIMODAL_TABLE_SIZE BIMODAL_SIZE_KBYTE * 8192
+#define BIMODAL_PRIME BIMODAL_TABLE_SIZE
 #define MAX_COUNTER 3
+
 int bimodal_table[NUM_CPUS][BIMODAL_TABLE_SIZE];
 
 void O3_CPU::initialize_branch_predictor()
 {
     cout << "CPU " << cpu << " Bimodal branch predictor" << endl;
-
+    int STORAGESIZE = std::log2(MAX_COUNTER) * BIMODAL_TABLE_SIZE;
+    fprintf(stdout, " (TOTAL %d bits = %d Kbits = %d kB) \n", STORAGESIZE,
+					STORAGESIZE / 1024, STORAGESIZE / 8192);
+    
     for(int i = 0; i < BIMODAL_TABLE_SIZE; i++)
         bimodal_table[cpu][i] = 0;
 }

@@ -29,6 +29,8 @@ using namespace std;
 
 extern uint32_t SCHEDULING_LATENCY, EXEC_LATENCY, DECODE_LATENCY;
 
+#define CHAMPIONSHIP_BP
+
 // cpu
 class O3_CPU {
   public:

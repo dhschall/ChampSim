@@ -1,0 +1,62 @@
+#include "ooo_cpu.h"
+
+#ifndef CHAMPIONSHIP_BP
+#error "CHAMPIONSHIP_BP need to be set
+#endif
+
+#include "tage_sc_l_8k.h"
+#include "instruction.h"
+
+//  Wrapper for TAGE Predictors
+PREDICTOR bp;
+
+void O3_CPU::initialize_branch_predictor()
+{
+    cout << "CPU " << cpu << " TAGE-SC-L 8kB branch predictor" << endl;
+    bp = PREDICTOR();
+}
+
+uint8_t last_pred{false};
+
+uint8_t O3_CPU::predict_branch(uint64_t ip)
+{
+    return bp.GetPrediction(ip);
+}
+
+void O3_CPU::last_branch_result(uint64_t ip, uint8_t taken)
+{
+    cout << "Not used" << endl;
+}
+
+void O3_CPU::update_branch_predictor(uint64_t ip, uint8_t branch_type, uint8_t pred_dir, uint8_t taken, uint64_t branch_target)
+{
+    // Convert Operation Type
+    OpType opType = OPTYPE_OP;
+    switch (branch_type)
+    {
+    case BRANCH_DIRECT_JUMP:
+        opType = OPTYPE_JMP_DIRECT_UNCOND; break;
+    case BRANCH_INDIRECT:
+        opType = OPTYPE_JMP_INDIRECT_UNCOND; break;
+    case BRANCH_CONDITIONAL:  
+        opType = OPTYPE_JMP_DIRECT_COND;break; 
+    case BRANCH_DIRECT_CALL:  
+        opType = OPTYPE_CALL_DIRECT_UNCOND;break;
+    case BRANCH_INDIRECT_CALL:
+        opType = OPTYPE_CALL_INDIRECT_UNCOND;break;
+    case BRANCH_RETURN:
+        opType = OPTYPE_RET_UNCOND;break;
+    case BRANCH_OTHER:
+        opType = OPTYPE_CALL_DIRECT_COND;break;
+        
+    default:
+        break;
+    }
+    // Update BP
+    bp.UpdatePredictor(
+                    ip,
+                    opType,
+                    taken,
+                    pred_dir, 
+                    branch_target);
+}
