@@ -4,6 +4,7 @@
 #include "ooo_cpu.h"
 #include "uncore.h"
 #include <fstream>
+#include <ostream>
 
 uint8_t warmup_complete[NUM_CPUS], 
         simulation_complete[NUM_CPUS], 
@@ -111,7 +112,37 @@ void print_branch_stats()
 	cout << "BRANCH_INDIRECT_CALL: " << ooo_cpu[i].total_branch_types[5] << " " << (100.0*ooo_cpu[i].total_branch_types[5])/(ooo_cpu[i].num_retired - ooo_cpu[i].begin_sim_instr) << "%" << endl;
 	cout << "BRANCH_RETURN: " << ooo_cpu[i].total_branch_types[6] << " " << (100.0*ooo_cpu[i].total_branch_types[6])/(ooo_cpu[i].num_retired - ooo_cpu[i].begin_sim_instr) << "%" << endl;
 	cout << "BRANCH_OTHER: " << ooo_cpu[i].total_branch_types[7] << " " << (100.0*ooo_cpu[i].total_branch_types[7])/(ooo_cpu[i].num_retired - ooo_cpu[i].begin_sim_instr) << "%" << endl << endl;
+
+    
+
     }
+}
+
+void dump_branch_trace()
+{
+    // Write csv header
+    cout << endl << "BRANCH TRACE TABLE" << endl;
+    cout << "BR_IP,BR_TYPE,BR_TARGET,N_EXE,N_TAKEN,N_MISS" << endl;
+    for (auto it = ooo_cpu[0].branch_table.begin(); it != ooo_cpu[0].branch_table.end(); it++) {
+        // cout << "BRANCH IP: " << it->first << " => " << it->second.print()  << endl;   
+        cout    << it->first << "," 
+                << to_string(it->second.branch_type) << ","
+                << it->second.branch_target << ","
+                << it->second.executions << ","
+                << it->second.taken << ","
+                << it->second.miss_pred
+                << endl;
+    }
+    cout << "BT JSON: [";
+    for (auto it = ooo_cpu[0].branch_table.begin(); it != ooo_cpu[0].branch_table.end(); it++) {
+        cout << "{ \"BR_IP\" : " << it->first << ","
+             << " \"BR_TYPE\" : " << to_string(it->second.branch_type) << "," 
+             << " \"BR_TARGET\" : " << it->second.branch_target << "," 
+             << " \"N_EXE\" : " << it->second.executions << "," 
+             << " \"N_TAKEN\" : " << it->second.taken << "," 
+             << " \"N_MISS\" : " << it->second.miss_pred << "},"; 
+    }
+    cout << " ]" << endl;
 }
 
 void print_dram_stats()
@@ -506,6 +537,7 @@ int main(int argc, char** argv)
     uint8_t show_heartbeat = 1;
 
     uint32_t seed_number = 0;
+    string out_file = "";
 
     // check to see if knobs changed using getopt_long()
     int c;
@@ -518,6 +550,7 @@ int main(int argc, char** argv)
             {"cloudsuite", no_argument, 0, 'c'},
             {"low_bandwidth",  no_argument, 0, 'b'},
             {"traces",  no_argument, 0, 't'},
+            {"out_file",  no_argument, 0, 'o'},
             {0, 0, 0, 0}      
         };
 
@@ -551,6 +584,9 @@ int main(int argc, char** argv)
             case 't':
                 traces_encountered = 1;
                 break;
+            case 'o':
+                out_file = string(optarg);
+                break;
             default:
                 abort();
         }
@@ -566,6 +602,7 @@ int main(int argc, char** argv)
     cout << "Number of CPUs: " << NUM_CPUS << endl;
     cout << "LLC sets: " << LLC_SET << endl;
     cout << "LLC ways: " << LLC_WAY << endl;
+    cout << "Branch out file" << out_file << endl;
 
     if (knob_low_bandwidth)
         DRAM_MTPS = DRAM_IO_FREQ/4;
@@ -959,6 +996,9 @@ int main(int argc, char** argv)
     uncore.LLC.llc_replacement_final_stats();
     print_dram_stats();
     print_branch_stats();
+    if (true) {
+        dump_branch_trace();
+    }
 #endif
 
     return 0;

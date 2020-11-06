@@ -377,38 +377,123 @@ void O3_CPU::read_from_trace()
                         
                         num_branch++;
                         // handle branch prediction & branch predictor update
-			uint8_t branch_prediction = predict_branch(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
-			uint64_t predicted_branch_target = IFETCH_BUFFER.entry[ifetch_buffer_index].branch_target;
-			if(branch_prediction == 0)
-			  {
-			    predicted_branch_target = 0;
-			  }
-			// call code prefetcher every time the branch predictor is used
-			l1i_prefetcher_branch_operate(IFETCH_BUFFER.entry[ifetch_buffer_index].ip,
-						      IFETCH_BUFFER.entry[ifetch_buffer_index].branch_type,
-						      predicted_branch_target);
-			
-			if(IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken != branch_prediction)
-			  {
-			    branch_mispredictions++;
-			    total_rob_occupancy_at_branch_mispredict += ROB.occupancy;
-			    if(warmup_complete[cpu])
-			      {
-				fetch_stall = 1;
-				instrs_to_read_this_cycle = 0;
-				IFETCH_BUFFER.entry[ifetch_buffer_index].branch_mispredicted = 1;
-			      }
-			  }
-			else
-			  {
-			    // correct prediction
-			    if(branch_prediction == 1)
-			      {
-				// if correctly predicted taken, then we can't fetch anymore instructions this cycle
-				instrs_to_read_this_cycle = 0;
-			      }
-			  }
-			
+
+                        // Test: filter out the most missing data dependent branches
+                        uint8_t filter = 0;
+                        // if ((IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4216643) ||
+                        //     (IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4216650) ||
+                        //     (IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4217194)
+                        //     )
+                        // { 
+                        //     filter = 1;
+                        // }
+
+                        
+                        
+                        uint8_t branch_prediction = 0;
+                        
+                        if (!filter) {
+                            branch_prediction = predict_branch(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
+                        }
+
+                        uint64_t predicted_branch_target = IFETCH_BUFFER.entry[ifetch_buffer_index].branch_target;
+                        
+
+
+                        // for each new branch a tracking entry will be added
+                        auto bte = branch_table.find(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
+                        if (warmup_complete[cpu]) {
+                            if (bte == branch_table.end()) {
+                                branch_track_t _bt = {1,0,0, IFETCH_BUFFER.entry[ifetch_buffer_index].branch_type, IFETCH_BUFFER.entry[ifetch_buffer_index].branch_target };
+                                auto ret = branch_table.emplace(IFETCH_BUFFER.entry[ifetch_buffer_index].ip, _bt);
+                                bte = ret.first;
+                            } else {
+                                bte->second.executions++;
+                                if (bte->second.branch_target == 0) {
+                                    bte->second.branch_target = IFETCH_BUFFER.entry[ifetch_buffer_index].branch_target;
+                                }
+                            }
+                            if (IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken) { 
+                                bte->second.taken++;
+                                bte->second.taken_last_time = 1;
+                            } else {
+                                bte->second.taken_last_time = 0;
+                            }
+
+                            // if (bte->first == 4211459) { 
+                            //     cout << " instr_id: " << instr_unique_id
+                            //         << "Br: 404303," << (IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken ? " Taken" : " Not taken") << endl; }
+                            // if (bte->first == 4211466) { 
+                            //     cout << " instr_id: " << instr_unique_id
+                            //         << "Br: 40430a," << (IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken ? " Taken" : " Not taken") << endl; }
+                            
+
+                            // // Test for correlated branches.
+                            // // 404720
+                            // if (bte->first == 4212512) {
+                            //     auto cor_br_404303 = branch_table.find(4211459); // 404303
+                            //     auto cor_br_40430a = branch_table.find(4211466); // 40430a
+                            //     // if (cor_br_404303 != branch_table.end()) {
+                            //     //     cout << "Found correlated branch 404303 \n";
+                            //     // }
+                            //     // cout << "Br. 404720: Prediction: " << +branch_prediction << endl;
+                                
+                            //     if (cor_br_404303 != branch_table.end() && cor_br_404303->second.taken_last_time) {
+                            //         branch_prediction = 0;
+                            //         // cout << "404303 was taken last time. Br: 404720 must not be taken "
+                            //         //  << " Branch outcome: " << (IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken ? " Taken" : " Not taken") << endl; 
+                            //          }
+                            //     else if (cor_br_40430a != branch_table.end() && cor_br_40430a->second.taken_last_time) {
+                            //         branch_prediction = 1;
+                            //         // cout << "404303 was not taken but 40430a was taken. Br: 404720 must be taken "
+                            //         //  << " Branch outcome: " << (IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken ? " Taken" : " Not taken") << endl; 
+                            //          }
+                            // }
+                        }
+                        
+
+
+                        
+
+
+                        if (branch_prediction == 0)
+                        {
+                            predicted_branch_target = 0;
+                        }
+                        // call code prefetcher every time the branch predictor is used
+                        l1i_prefetcher_branch_operate(IFETCH_BUFFER.entry[ifetch_buffer_index].ip,
+                                                      IFETCH_BUFFER.entry[ifetch_buffer_index].branch_type,
+                                                      predicted_branch_target);
+
+                        if (IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken != branch_prediction)
+                        {
+			                DP(if (warmup_complete[cpu]) { cout << "[BRANCH] misprediction: PC: " << IFETCH_BUFFER.entry[ifetch_buffer_index].ip << endl; });
+                            
+
+                            branch_mispredictions++;
+                            total_rob_occupancy_at_branch_mispredict += ROB.occupancy;
+                            if (warmup_complete[cpu])
+                            {
+                                bte->second.miss_pred++;
+                                fetch_stall = 1;
+                                instrs_to_read_this_cycle = 0;
+                                IFETCH_BUFFER.entry[ifetch_buffer_index].branch_mispredicted = 1;
+                            }
+                        }
+                        else
+                        {
+                            // correct prediction
+                            if (branch_prediction == 1)
+                            {
+                                // if correctly predicted taken, then we can't fetch anymore instructions this cycle
+                                instrs_to_read_this_cycle = 0;
+                            }
+                        }
+
+                        if (!filter) {
+
+                        // #define TAGE_BP 1
+
 #ifdef CHAMPIONSHIP_BP
 // #error "CHAMPIONSHIP_BP defined"
                             update_branch_predictor(IFETCH_BUFFER.entry[ifetch_buffer_index].ip, 
@@ -420,6 +505,7 @@ void O3_CPU::read_from_trace()
                             last_branch_result(IFETCH_BUFFER.entry[ifetch_buffer_index].ip, IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken);
 #endif
                         }
+                    }
 
                     if ((num_reads >= instrs_to_read_this_cycle) || (IFETCH_BUFFER.occupancy == IFETCH_BUFFER.SIZE))
                         continue_reading = 0;
@@ -506,8 +592,6 @@ uint32_t O3_CPU::add_to_ifetch_buffer(ooo_model_instr *arch_instr)
     uint64_t instr_pa = va_to_pa(cpu, IFETCH_BUFFER.entry[index].instr_id, IFETCH_BUFFER.entry[index].ip, (IFETCH_BUFFER.entry[index].ip) >> LOG2_PAGE_SIZE, 1);
     instr_pa >>= LOG2_PAGE_SIZE;
     instr_pa <<= LOG2_PAGE_SIZE;
-    instr_pa |= (IFETCH_BUFFER.entry[index].ip & ((1 << LOG2_PAGE_SIZE) - 1));
-  instr_pa |= (IFETCH_BUFFER.entry[index].ip & ((1 << LOG2_PAGE_SIZE) - 1));  
     instr_pa |= (IFETCH_BUFFER.entry[index].ip & ((1 << LOG2_PAGE_SIZE) - 1));
     IFETCH_BUFFER.entry[index].instruction_pa = instr_pa;
     IFETCH_BUFFER.entry[index].translated = COMPLETED;
@@ -646,8 +730,6 @@ void O3_CPU::fetch_instruction()
             trace_packet.producer = 0; // TODO: check if this guy gets used or not
             trace_packet.ip = IFETCH_BUFFER.entry[index].ip;
             trace_packet.type = LOAD;
-	  trace_packet.type = LOAD; 
-            trace_packet.type = LOAD;
             trace_packet.asid[0] = 0;
             trace_packet.asid[1] = 0;
             trace_packet.event_cycle = current_core_cycle[cpu];
@@ -685,8 +767,6 @@ void O3_CPU::fetch_instruction()
             fetch_packet.rob_index = 0;
             fetch_packet.producer = 0;
             fetch_packet.ip = IFETCH_BUFFER.entry[index].ip;
-            fetch_packet.type = LOAD;
-	  fetch_packet.type = LOAD; 
             fetch_packet.type = LOAD;
             fetch_packet.asid[0] = 0;
             fetch_packet.asid[1] = 0;
@@ -743,8 +823,6 @@ void O3_CPU::fetch_instruction()
         if (IFETCH_BUFFER.entry[IFETCH_BUFFER.head].ip == 0)
         {
             break;
-        }
-	}	      
         }
 
         if ((IFETCH_BUFFER.entry[IFETCH_BUFFER.head].translated == COMPLETED) && (IFETCH_BUFFER.entry[IFETCH_BUFFER.head].fetched == COMPLETED))
@@ -882,8 +960,6 @@ int O3_CPU::prefetch_code_line(uint64_t pf_v_addr)
         pf_packet.type = PREFETCH;
         pf_packet.event_cycle = current_core_cycle[cpu];
 
-        L1I.add_pq(&pf_packet);
-      L1I.add_pq(&pf_packet);    
         L1I.add_pq(&pf_packet);
         L1I.pf_issued++;
 
@@ -2045,8 +2121,6 @@ void O3_CPU::complete_instr_fetch(PACKET_QUEUE *queue, uint8_t is_it_tlb)
             }
         }
 
-        // remove this entry
-	// remove this entry                                                                                                                                                                        
         // remove this entry
         queue->remove_queue(&queue->entry[index]);
     }
