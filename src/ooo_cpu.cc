@@ -376,32 +376,13 @@ void O3_CPU::read_from_trace()
                         DP(if (warmup_complete[cpu]) { cout << "[BRANCH] instr_id: " << instr_unique_id << " ip: " << hex << arch_instr.ip << dec << " taken: " << +arch_instr.branch_taken << endl; });
                         
                         num_branch++;
+
+
                         // handle branch prediction & branch predictor update
-
-                        // Test: filter out the most missing data dependent branches
-                        uint8_t filter = 0;
-                        // if ((IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4216643) ||
-                        //     (IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4216650) ||
-                        //     (IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4217194)
-                        //     )
-                        // { 
-                        //     filter = 1;
-                        // }
-
-                        
-                        
-                        uint8_t branch_prediction = 0;
-                        
-                        if (!filter) {
-                            branch_prediction = predict_branch(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
-                        }
-
-                        uint64_t predicted_branch_target = IFETCH_BUFFER.entry[ifetch_buffer_index].branch_target;
-                        
 
 
                         // for each new branch a tracking entry will be added
-                        auto bte = branch_table.find(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
+                        bte = branch_table.find(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
                         if (warmup_complete[cpu]) {
                             if (bte == branch_table.end()) {
                                 branch_track_t _bt = {1,0,0, IFETCH_BUFFER.entry[ifetch_buffer_index].branch_type, IFETCH_BUFFER.entry[ifetch_buffer_index].branch_target };
@@ -450,6 +431,32 @@ void O3_CPU::read_from_trace()
                             //          }
                             // }
                         }
+
+
+
+                        // Test: filter out the most missing data dependent branches
+                        uint8_t filter = 0;
+                        // if ((IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4216643) ||
+                        //     (IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4216650) ||
+                        //     (IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4217194)
+                        //     )
+                        // { 
+                        //     filter = 1;
+                        // }
+
+                        
+                        
+                        uint8_t branch_prediction = 0;
+                        
+                        if (!filter) {
+                            branch_prediction = predict_branch(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
+                        }
+
+                        uint64_t predicted_branch_target = IFETCH_BUFFER.entry[ifetch_buffer_index].branch_target;
+                        
+
+
+                        
                         
 
 

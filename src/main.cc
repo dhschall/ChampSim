@@ -5,6 +5,7 @@
 #include "uncore.h"
 #include <fstream>
 #include <ostream>
+#include <string>
 
 uint8_t warmup_complete[NUM_CPUS], 
         simulation_complete[NUM_CPUS], 
@@ -133,16 +134,33 @@ void dump_branch_trace()
                 << it->second.miss_pred
                 << endl;
     }
-    cout << "BT JSON: [";
+
+    // Write JSON
+    Json::Value root, branches;
+    root["sim_inst"] = ooo_cpu[0].finish_sim_instr;
+    root["sim_cycle"] = ooo_cpu[0].finish_sim_cycle;
+    root["sum_retired"] = ooo_cpu[0].num_retired;
+    root["warm_inst"] = ooo_cpu[0].warmup_instructions;
+    root["sum_branch"] = ooo_cpu[0].num_branch;
+    root["sum_miss"] = ooo_cpu[0].branch_mispredictions;
+    root["rob_occu"] = ooo_cpu[0].total_rob_occupancy_at_branch_mispredict;
+
+
     for (auto it = ooo_cpu[0].branch_table.begin(); it != ooo_cpu[0].branch_table.end(); it++) {
-        cout << "{ \"BR_IP\" : " << it->first << ","
-             << " \"BR_TYPE\" : " << to_string(it->second.branch_type) << "," 
-             << " \"BR_TARGET\" : " << it->second.branch_target << "," 
-             << " \"N_EXE\" : " << it->second.executions << "," 
-             << " \"N_TAKEN\" : " << it->second.taken << "," 
-             << " \"N_MISS\" : " << it->second.miss_pred << "},"; 
+        auto val = it->second.dumpJSON();
+        val["ip"] = it->first;
+        // root[to_string(it->first)] = val;
+        branches.append(val);
     }
-    cout << " ]" << endl;
+    root["branches"] = branches;
+
+    cout << "BT JSON: ";
+    // Write out into the file
+    // Json::StreamWriterBuilder builder();
+    // // builder.settings_
+    // cout << Json::writeString(builder, root);
+    cout << root;
+    cout << endl;
 }
 
 void print_dram_stats()

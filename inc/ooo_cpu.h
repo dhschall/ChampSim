@@ -3,6 +3,7 @@
 
 #include "cache.h"
 #include <unordered_map>
+#include "branch_tracing.h"
 
 #ifdef CRC2_COMPILE
 #define STAT_PRINTING_PERIOD 1000000
@@ -29,27 +30,6 @@ using namespace std;
 #define STA_SIZE (ROB_SIZE*NUM_INSTR_DESTINATIONS_SPARC)
 
 extern uint32_t SCHEDULING_LATENCY, EXEC_LATENCY, DECODE_LATENCY;
-
-struct branch_track_t {
-  // count how often the branch was executed
-  uint64_t executions;
-  // count how often the branch is taken
-  uint64_t taken;
-  // count the number of miss predictions
-  uint64_t miss_pred;
-  // branch type
-  uint8_t branch_type;
-  // branch target
-  uint64_t branch_target;
-  //
-  uint8_t taken_last_time;
-
-  std::string print() {
-    // const char *fmt = "N_exe: %i; N_mispred: %i; br. typ: %i; br. target: %#x";
-    // std::string s = str( format("%2% %2% %1%\n") % "world" % "hello" );
-    return "N_exe: " + to_string(executions) + "; N_mispred: " + to_string(miss_pred) + "; br. typ: " + to_string(branch_type) + "; br. target: " + to_string(branch_target);
-  }
-};
 
 #define CHAMPIONSHIP_BP
 
@@ -110,6 +90,7 @@ class O3_CPU {
   // Missprediction tracking
   // < IP, number of mispredictions >
   std::unordered_map<uint64_t, branch_track_t> branch_table;
+  std::unordered_map<uint64_t, branch_track_t>::iterator bte = branch_table.end();
 
 
     // TLBs and caches
