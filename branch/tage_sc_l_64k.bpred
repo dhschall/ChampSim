@@ -1,7 +1,7 @@
 #include "ooo_cpu.h"
 
 #ifndef CHAMPIONSHIP_BP
-#error "CHAMPIONSHIP_BP need to be set
+#error "CHAMPIONSHIP_BP need to be set"
 #endif
 
 #include "tage_sc_l_64k.h"
@@ -14,6 +14,7 @@ void O3_CPU::initialize_branch_predictor()
 {
     cout << "CPU " << cpu << " TAGE-SC-L 64kB branch predictor" << endl;
     bp = PREDICTOR();
+    bp.parent_cpu = this;
 }
 
 uint8_t last_pred{false};

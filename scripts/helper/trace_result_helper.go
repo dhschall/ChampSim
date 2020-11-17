@@ -7,19 +7,23 @@ import (
 )
 
 type TAGEInfo struct {
-	Tage_miss       uint    `json:"tage_miss"`
-	Sc_miss         uint    `json:"sc_miss"`
-	Loop_miss       uint    `json:"loop_miss"`
-	Tage_pred       uint    `json:"tage_pred"`
-	Sc_pred         uint    `json:"sc_pred"`
-	Loop_pred       uint    `json:"loop_pred"`
-	N_alloc         uint    `json:"n_alloc"`
-	N_entries_alloc uint    `json:"n_entries_alloc"`
-	Hit_bank        uint    `json:"hit_bank"`
-	Avg_hit_bank    float64 `json:"avg_hit_bank"`
-	Utilization     uint    `json:"utilization"`
-	MaxUtil         uint    `json:"max_util"`
-	Avg_utilization float64 `json:"avg_utilization"`
+	Tage_miss          uint    `json:"tage_miss"`
+	Sc_miss            uint    `json:"sc_miss"`
+	Loop_miss          uint    `json:"loop_miss"`
+	Tage_pred          uint    `json:"tage_pred"`
+	Sc_pred            uint    `json:"sc_pred"`
+	Loop_pred          uint    `json:"loop_pred"`
+	N_alloc            uint    `json:"n_alloc"`
+	N_entries_alloc    uint    `json:"n_entries_alloc"`
+	Avg_entries_alloc  float64 `json:"avg_entries_alloc"`
+	N_useful_entries   uint    `json:"n_useful_entries"`
+	Avg_useful_entries float64 `json:"avg_useful_entries"`
+	Hit_bank           uint    `json:"hit_bank"`
+	Avg_hit_bank       float64 `json:"avg_hit_bank"`
+	Utilization        uint    `json:"utilization"`
+	MaxUtil            uint    `json:"max_util"`
+	UtilRatio          float64 `json:"util_ratio"`
+	Avg_utilization    float64 `json:"avg_utilization"`
 }
 
 func (r *TAGEInfo) Merge(other TAGEInfo) {
@@ -31,6 +35,7 @@ func (r *TAGEInfo) Merge(other TAGEInfo) {
 	r.Loop_pred += other.Loop_pred
 	r.Hit_bank += other.Hit_bank
 	r.N_alloc += other.N_alloc
+	r.N_useful_entries += other.N_useful_entries
 	r.N_entries_alloc += other.N_entries_alloc
 	r.Utilization += other.Utilization
 	if other.MaxUtil > r.MaxUtil {
@@ -38,11 +43,15 @@ func (r *TAGEInfo) Merge(other TAGEInfo) {
 	}
 }
 
-// func (r *TAGEInfo) Process() {
-
-// 	r.Avg_hit_bank = uint(float64(r.Hit_bank) / float64(r.N_exe))
-// 	r.Avg_utilization = uint(float64(r.Utilization) / float64(r.N_exe))
-// }
+func (r *TAGEInfo) Process() {
+	if r.N_alloc > 0 {
+		r.Avg_utilization = float64(r.Utilization) / float64(r.N_alloc)
+		r.UtilRatio = float64(r.Avg_utilization) / float64(30000) // For Tage 64k
+		// r.UtilRatio = float64(r.Avg_utilization) / float64(3328) // For Tage 8k
+		r.Avg_useful_entries = float64(r.N_useful_entries) / float64(r.N_alloc)
+		r.Avg_entries_alloc = float64(r.N_entries_alloc) / float64(r.N_alloc)
+	}
+}
 
 type BranchResult struct {
 	// BrIP     uint `json:"BR_IP"`
@@ -130,9 +139,7 @@ func (r *BranchResult) Process() {
 	}
 
 	r.Tage_info.Avg_hit_bank = float64(r.Tage_info.Hit_bank) / float64(r.N_exe)
-	if r.Tage_info.N_alloc > 0 {
-		r.Tage_info.Avg_utilization = float64(r.Tage_info.Utilization) / float64(r.Tage_info.N_alloc) / 2.0
-	}
+	r.Tage_info.Process()
 }
 
 type TraceResult struct {
@@ -204,14 +211,15 @@ func PrintMostSignificant(m *map[uint]*BranchResult, n int) {
 	miss_o := sortMissRatio(m)
 
 	fmt.Printf("%d Most signficat branch instructions:\n", n)
-	fmt.Printf("  | Br. IP   | Miss R   | Accuracy | Dynamism | Avg Util |   ID   |\n")
+	fmt.Printf("    | Br. IP   | Miss R   | Accuracy | Dynamism | Avg Util        | Useful   |  ID   | Category |\n")
 	for i := 0; i < n; i++ {
 		e := (*m)[miss_o[i].Key]
-		fmt.Printf("%d | %#x | %f | %f | %f | %8f |",
-			i, e.BrIP, e.MissRatio, e.Accuracy, e.Dynamism, e.Tage_info.Avg_utilization)
+		fmt.Printf("%3d | %#x | %f | %f | %f | %7.2f (%4.2f%%) | %8.3f |",
+			i, e.BrIP, e.MissRatio, e.Accuracy, e.Dynamism,
+			e.Tage_info.Avg_utilization, e.Tage_info.UtilRatio*100, e.Tage_info.Avg_useful_entries)
 
 		if e.BAResult != nil {
-			fmt.Printf(" %d", e.BAResult.ID)
+			fmt.Printf(" %d | %8s |\n", e.BAResult.ID, e.BAResult.Category)
 		} else {
 			fmt.Printf("\n")
 		}

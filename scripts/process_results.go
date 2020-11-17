@@ -97,6 +97,18 @@ func findResultFiles(dir string, values []string) (ret []string) {
 	return
 }
 
+func findExperiment(dir string, values []string) (experiment string, ret []string) {
+	ret = findResultFiles(dir,append(values, ".txt"))
+	if len(ret) != 10 {
+		fmt.Println(ret)
+		log.Fatalf("Wrong number of result files: expect 10, found %d\n", len(ret))
+	}
+	// Remove the experiment index
+	val := strings.SplitN(ret[0],"-",3)
+	experiment = val[0] + "-" + val[2][:len(val[2])-4]
+	return
+}
+
 func main() {
 	// Get arguments ---------------------------------------
 	var sFlags searchFlags
@@ -109,16 +121,13 @@ func main() {
 
 	// Get the results files
 	var files []string
+	var experiment string
 	if len(sFlags) > 0 {
 		// Find mode:
 		// In this mode we search for files in a directory
-		files = findResultFiles(dir, sFlags)
-		fmt.Printf("Found %d result files matching the constraints:\n", len(files))
-		if len(files) == 0 {
-			return
-		}
-		fmt.Println(files)
-		fmt.Println("Do you want to merge them? [y,yes]")
+		experiment, files = findExperiment(dir, sFlags)
+		fmt.Printf("Found experiment: %s matching the constraints:\n", experiment)
+		fmt.Println("Do you want to merge it? [y,yes]")
 		var ans string
 		fmt.Scanf("%s", &ans)
 		if strings.Compare(ans, "y") != 0 && strings.Compare(ans, "yes") != 0 {
@@ -187,7 +196,8 @@ func main() {
 		log.Fatal("Unable to create the JSON. err = %s", err)
 	}
 
-	if err := ioutil.WriteFile("test.json", data, 0644); err != nil {
+	res_file := dir + experiment + ".json"
+	if err := ioutil.WriteFile(res_file, data, 0644); err != nil {
 		log.Fatal(err)
 	}
 }

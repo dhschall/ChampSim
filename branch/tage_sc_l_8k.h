@@ -167,11 +167,15 @@ public:
 	uint tag;
 	int8_t u;
 
+	// meta info
+	uint64_t full_pc;
+
 	gentry()
 	{
 		ctr = 0;
 		u = 0;
 		tag = 0;
+		full_pc = 0;
 	}
 };
 
@@ -353,6 +357,9 @@ int predictorsize()
 class PREDICTOR
 {
 public:
+	// Accessor to the parent CPU for the analysis.
+	O3_CPU* parent_cpu;
+
 	int THRES;
 
 	PREDICTOR(void)
@@ -760,10 +767,14 @@ public:
 		}
 	}
 
+	uint _pred_comes_from;
+
 	//compute the prediction
 	bool GetPrediction(UINT64 PC)
 	{
 		// computes the TAGE table addresses and the partial tags
+
+		_pred_comes_from = 0;
 		Tagepred(PC);
 		pred_taken = tage_pred;
 #ifndef SC
@@ -772,7 +783,11 @@ public:
 
 #ifdef LOOPPREDICTOR
 		predloop = getloop(PC); // loop prediction
-		pred_taken = ((WITHLOOP >= 0) && (LVALID)) ? predloop : pred_taken;
+		if ((WITHLOOP >= 0) && (LVALID)) {
+			pred_taken = predloop;
+			_pred_comes_from = 1;
+		}
+		// pred_taken = () ? predloop : pred_taken;
 #endif
 		pred_inter = pred_taken;
 
@@ -825,22 +840,33 @@ public:
 		if (pred_inter != SCPRED)
 		{
 			//Choser uses TAGE confidence and |LSUM|
-			pred_taken = SCPRED;
+			uint tmp = _pred_comes_from;
+			pred_taken = SCPRED;	_pred_comes_from = 2;
+		
 			if (HighConf)
 			{
 				if ((abs(LSUM) < THRES / 4))
 				{
-					pred_taken = pred_inter;
+					pred_taken = pred_inter; _pred_comes_from = tmp;
 				}
 
 				else if ((abs(LSUM) < THRES / 2))
-					pred_taken = (SecondH < 0) ? SCPRED : pred_inter;
+					if (SecondH < 0) {
+						pred_taken = SCPRED; _pred_comes_from = 2;
+					} else {
+						pred_taken = pred_inter; _pred_comes_from = tmp;
+					}
+					
 			}
 
 			if (MedConf)
 				if ((abs(LSUM) < THRES / 4))
 				{
-					pred_taken = (FirstH < 0) ? SCPRED : pred_inter;
+					if (FirstH < 0) {
+						pred_taken = SCPRED; _pred_comes_from = 2;
+					} else {
+						pred_taken = pred_inter; _pred_comes_from = tmp;
+					}
 				}
 		}
 
@@ -957,6 +983,35 @@ public:
 											 bool predDir, UINT64 branchTarget)
 	{
 
+
+		// Write some statistics for the current branch.
+		// where does the prediction come from?
+		bool _t = warmup_complete[parent_cpu->cpu];
+		if (_t) {
+			switch (_pred_comes_from) {
+				case 1:
+					parent_cpu->bte->second.tage_info.loop_pred++;
+					if (pred_taken != resolveDir)
+						parent_cpu->bte->second.tage_info.loop_miss++;
+					break;
+				case 2:
+					parent_cpu->bte->second.tage_info.sc_pred++;
+					if (pred_taken != resolveDir)
+						parent_cpu->bte->second.tage_info.sc_miss++;
+					break;
+				default:
+					parent_cpu->bte->second.tage_info.tage_pred++;
+					if (pred_taken != resolveDir)
+						parent_cpu->bte->second.tage_info.tage_miss++;
+					break;
+
+			}
+		}
+
+		// parent_cpu->bte->second.tage_info
+
+
+
 #ifdef SC
 #ifdef LOOPPREDICTOR
 		if (LVALID)
@@ -1048,6 +1103,11 @@ public:
 		}
 #endif // SC
 
+
+		// Misspredicted
+		if (_t)	parent_cpu->bte->second.tage_info.hit_bank += HitBank; // Later an average can be calulated
+
+		
 		//TAGE UPDATE
 		bool ALLOC = ((tage_pred != resolveDir) & (HitBank < NHIST));
 		if (pred_taken == resolveDir)
@@ -1075,6 +1135,16 @@ public:
 				}
 			}
 		}
+		// Test what happen if we do not allocate hardest to predict branches.
+		// {
+			// switch (PC) {
+			// 	case 0x405743:
+			// 	case 0x40574a:
+			// 	case 0x40596a:
+			// 		ALLOC = false;
+			// 		break;
+			// }
+		// }
 
 		if (ALLOC)
 		{
@@ -1106,6 +1176,7 @@ public:
 #endif
 							gtable[i][GI[i]].tag = GTAG[i];
 							gtable[i][GI[i]].ctr = (resolveDir) ? 0 : -1;
+							gtable[i][GI[i]].full_pc = PC;
 							NA++;
 							if (T <= 0)  // are 1 + NNN (extra entries) per missprediction allocated?
 							{
@@ -1143,6 +1214,7 @@ public:
 #endif
 								gtable[i][GI[i]].tag = GTAG[i];
 								gtable[i][GI[i]].ctr = (resolveDir) ? 0 : -1;
+								gtable[i][GI[i]].full_pc = PC;
 								NA++;
 								if (T <= 0)
 								{
@@ -1192,7 +1264,42 @@ public:
 					}
 				TICK = 0;
 			}
-		}
+
+			// check all entries and count the number of entries used for this branch.	
+			if (_t) {
+
+				uint n_entries = 0, n_useful_entries = 0;
+				// First search the lower banks. They are in subsequent order starting at 1
+				int base = 1, size = NBBANK[0] * (1 << LOGG);
+				for (int i = 0; i < size; i++) {
+					if (gtable[base][i].full_pc == PC) {
+						n_entries++;
+						if(gtable[base][i].u != 0) {
+							n_useful_entries++;
+						}
+					}
+				}
+				// Secondly search the higher banks. As well in subsequent order starting at BORN
+				base = BORN; size = NBBANK[1] * (1 << LOGG);
+				for (int i = 0; i < size; i++) {
+					if (gtable[base][i].full_pc == PC) {
+						n_entries++;
+						if(gtable[base][i].u != 0) {
+							n_useful_entries++;
+						}
+					}
+				}
+
+				parent_cpu->bte->second.tage_info.n_alloc++;
+				parent_cpu->bte->second.tage_info.n_entries_alloc += NA;
+				parent_cpu->bte->second.tage_info.utilization += n_entries;
+				parent_cpu->bte->second.tage_info.n_useful_entries += n_useful_entries;
+				
+				if (parent_cpu->bte->second.tage_info.max_util < n_entries) {
+					parent_cpu->bte->second.tage_info.max_util = n_entries;
+				}
+			} 
+		} /// End allocate
 
 		//update predictions the already existing entry.
 		if (HitBank > 0)

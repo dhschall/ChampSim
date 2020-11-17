@@ -171,7 +171,8 @@ func main() {
 	}
 	// fmt.Println(jobs)
 
-	fmt.Printf("Create %d jobs to run with %d warmup and %d sim inst. Do you want to start them? [y,yes]", len(jobs), nWarm, nSim)
+	fmt.Printf("Create %d jobs to run with %dM warmup and %dM sim inst. Do you want to start them? [y,yes]\n",
+							len(jobs), nWarm, nSim)
 	var ans string
 	fmt.Scanf("%s", &ans)
 	if strings.Compare(ans, "y") != 0 && strings.Compare(ans, "yes") != 0 {

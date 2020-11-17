@@ -22,13 +22,15 @@ struct branch_track_t {
   struct tage_info_t {
     uint64_t tage_miss, sc_miss, loop_miss;
     uint64_t tage_pred, sc_pred, loop_pred;
-    uint64_t n_alloc,n_entries_alloc, hit_bank;
+    uint64_t n_alloc, n_useful_entries;
+    uint64_t n_entries_alloc, hit_bank;
     uint64_t utilization, max_util; 
 
     tage_info_t()
       : tage_miss{0}, sc_miss{0}, loop_miss{0},
       tage_pred{0}, sc_pred{0}, loop_pred{0},
-      n_alloc{0}, n_entries_alloc{0}, hit_bank{0},
+      n_alloc{0}, n_useful_entries{0},
+      n_entries_alloc{0}, hit_bank{0},
       utilization{0}, max_util{0}
     {}
   } tage_info;
@@ -60,6 +62,7 @@ struct branch_track_t {
     tage_val["max_util"] = tage_info.max_util;
    
     tage_val["n_alloc"] = tage_info.n_alloc;
+    tage_val["n_useful_entries"] = tage_info.n_useful_entries;
     tage_val["n_entries_alloc"] = tage_info.n_entries_alloc;
     tage_val["hit_bank"] = tage_info.hit_bank;
     val["tage_info"] = tage_val;
