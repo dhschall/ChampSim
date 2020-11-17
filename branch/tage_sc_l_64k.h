@@ -7,8 +7,12 @@
 #include <inttypes.h>
 #include <math.h>
 #include "utils.h"
+#include "ooo_cpu.h"
+// #include "oo"
 
 #define BORNTICK 1024
+//for the allocation policy
+
 //To get the predictor storage budget on stderr  uncomment the next line
 #define PRINTSIZE
 #include <vector>
@@ -117,10 +121,11 @@ long long T_slhist[NTLOCAL];
 // playing on using different update thresholds on SC
 //update threshold for the statistical corrector
 #define VARTHRES
+//more than one update threshold
 #define WIDTHRES 12
 #define WIDTHRESP 8
 #ifdef VARTHRES
-#define LOGSIZEUP 6 //not worth increasing
+#define LOGSIZEUP 6 //not worth increasing:  0-> 6 0.05 MPKI
 #else
 #define LOGSIZEUP 0
 #endif
@@ -142,7 +147,7 @@ int LSUM;
 
 // The two counters used to choose between TAGE and SC on Low Conf SC
 int8_t FirstH, SecondH;
-bool MedConf; // is the TAGE prediction medium confidence
+
 
 #define CONFWIDTH 7						//for the counters in the choser
 #define HISTBUFFERLENGTH 4096 // we use a 4K entries history buffer to store the branch history (this allows us to explore using history length up to 4K)
@@ -234,6 +239,9 @@ int SizeTable[NHIST + 1];
 bool NOSKIP[NHIST + 1]; // to manage the associativity for different history lengths
 bool LowConf;
 bool HighConf;
+bool MedConf; // is the TAGE prediction medium confidence
+
+
 
 #define NNN 1				// number of extra entries allocated on a TAGE misprediction (1+NNN)
 #define HYSTSHIFT 2 // bimodal hysteresis shared by 4 entries
@@ -255,6 +263,7 @@ long long GHIST;
 int8_t BIM;
 
 int TICK; // for the reset of the u counter
+
 uint8_t ghist[HISTBUFFERLENGTH];
 int ptghist;
 long long phist;									 //path history
@@ -265,7 +274,7 @@ folded_history ch_t[2][NHIST + 1]; //utility for computing TAGE tags
 bentry *btable;						 //bimodal TAGE table
 gentry *gtable[NHIST + 1]; // tagged TAGE tables
 int m[NHIST + 1];
-int TB[NHIST + 1];
+int TB[NHIST + 1];  				// Tagged predictor components Ti
 int logg[NHIST + 1];
 
 int GI[NHIST + 1];		// indexes to the different tables are computed only once
@@ -282,7 +291,7 @@ bool pred_inter;
 
 #ifdef LOOPPREDICTOR
 //parameters of the loop predictor
-#define LOGL 5
+#define LOGL 5 						 // 32 entries
 #define WIDTHNBITERLOOP 10 // we predict only loops with less than 1K iterations
 #define LOOPTAG 10				 //tag width in the loop predictor
 
@@ -435,6 +444,7 @@ public:
 								0.5);
 			//      fprintf(stderr, "(%d %d)", m[i],i);
 		}
+
 		for (int i = 1; i <= NHIST; i++)
 		{
 			NOSKIP[i] = ((i - 1) & 1) || ((i >= BORNINFASSOC) & (i < BORNSUPASSOC));
@@ -709,8 +719,7 @@ public:
 	{
 		int index;
 		int M = (m[bank] > PHISTWIDTH) ? PHISTWIDTH : m[bank];
-		index =
-				PC ^ (PC >> (abs(logg[bank] - bank) + 1)) ^ ch_i[bank].comp ^ F(hist, M, bank);
+		index = PC ^ (PC >> (abs(logg[bank] - bank) + 1)) ^ ch_i[bank].comp ^ F(hist, M, bank);
 
 		return (index & ((1 << (logg[bank])) - 1));
 	}
@@ -740,6 +749,7 @@ public:
 
 	bool getbim()
 	{
+		// BI = bimodal index
 		BIM = (btable[BI].pred << 1) + (btable[BI >> HYSTSHIFT].hyst);
 		HighConf = (BIM == 0) || (BIM == 3);
 		LowConf = !HighConf;
@@ -805,9 +815,11 @@ public:
 				T = T % NBANKLOW;
 			}
 		//just do not forget most address are aligned on 4 bytes
+		// BI = bimodal index
 		BI = (PC ^ (PC >> 2)) & ((1 << LOGB) - 1);
 
 		{
+			// Get Bimodal prediction (default/base prediction)
 			alttaken = getbim();
 			tage_pred = alttaken;
 			LongestMatchPred = alttaken;
@@ -859,9 +871,9 @@ public:
 
 			HighConf =
 					(abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) >=
-					 (1 << CWIDTH) - 1);
-			LowConf = (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1);
-			MedConf = (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 5);
+					 (1 << CWIDTH) - 1);     // >= 7 (-4 or 3)
+			LowConf = (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1); // (-1 or 0)
+			MedConf = (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 5); // (-3 or 2)  
 		}
 	}
 
@@ -887,7 +899,7 @@ public:
 		LSUM = 0;
 
 		//integrate BIAS prediction
-		int8_t ctr = Bias[INDBIAS];
+		int8_t ctr = Bias[INDBIAS]; // First table is indexed with PC, LowConf, direction
 
 		LSUM += (2 * ctr + 1);
 		ctr = BiasSK[INDBIASSK];
@@ -992,7 +1004,7 @@ public:
 		case OPTYPE_JMP_INDIRECT_COND:
 		case OPTYPE_CALL_INDIRECT_COND:
 		case OPTYPE_RET_COND:
-			brtype += 1;
+			brtype += 1; /// Conditional inst. are odd
 			break;
 		}
 
@@ -1004,7 +1016,7 @@ public:
 			maxt = 3;
 
 #ifdef IMLI
-		if (brtype & 1)
+		if (brtype & 1)  /// Conditional
 		{
 #ifdef IMLI
 			IMHIST[IMLIcount] = (IMHIST[IMLIcount] << 1) + taken;
@@ -1040,7 +1052,7 @@ public:
 
 		int T = ((PC ^ (PC >> 2))) ^ taken;
 		int PATH = PC ^ (PC >> 2) ^ (PC >> 4);
-		if ((brtype == 3) & taken)
+		if ((brtype == 3) & taken)  // for indirect conditional we add also the target
 		{
 			T = (T ^ (target >> 2));
 			PATH = PATH ^ (target >> 2) ^ (target >> 4);
@@ -1050,10 +1062,10 @@ public:
 		{
 			bool DIR = (T & 1);
 			T >>= 1;
-			int PATHBIT = (PATH & 127);
+			int PATHBIT = (PATH & 127); // mask 7 bit
 			PATH >>= 1;
 			//update  history
-			Y--;
+			Y--;   // Y is the actual pointer in the history table
 			ghist[Y & (HISTBUFFERLENGTH - 1)] = DIR;
 			X = (X << 1) ^ PATHBIT;
 
@@ -1088,8 +1100,11 @@ public:
 #endif
 
 		bool SCPRED = (LSUM >= 0);
+		
+
 		if (pred_inter != SCPRED)
 		{
+			
 			if ((abs(LSUM) < THRES))
 				if ((HighConf))
 				{
@@ -1166,22 +1181,20 @@ public:
 
 			Gupdate(PC, resolveDir, T_slhist[INDTLOCAL], Tm, TGEHL, TNB, LOGTNB,
 							WT);
-#endif
-#endif
+#endif // LOCALT
+#endif // LOCALS
 
 #ifdef IMLI
 			Gupdate(PC, resolveDir, IMHIST[(IMLIcount)], IMm, IMGEHL, IMNB,
 							LOGIMNB, WIM);
 			Gupdate(PC, resolveDir, IMLIcount, Im, IGEHL, INB, LOGINB, WI);
-#endif
+#endif // IMLI
 		}
-#endif
-
+#endif // SC
 		//TAGE UPDATE
 		bool ALLOC = ((tage_pred != resolveDir) & (HitBank < NHIST));
 
 		//do not allocate too often if the overall prediction is correct
-
 		if (HitBank > 0)
 		{
 			// Manage the selection between longest matching and alternate matching
@@ -1196,11 +1209,10 @@ public:
 					ALLOC = false;
 				// if it was delivering the correct prediction, no need to allocate a new entry
 				//even if the overall prediction was false
-
 				if (LongestMatchPred != alttaken)
 				{
-					ctrupdate(use_alt_on_na[INDUSEALT], (alttaken == resolveDir),
-										ALTWIDTH);
+					ctrupdate(use_alt_on_na[INDUSEALT],
+										(alttaken == resolveDir), ALTWIDTH);
 				}
 			}
 		}
@@ -1211,14 +1223,13 @@ public:
 
 		if (ALLOC)
 		{
-
 			int T = NNN;
 
 			int A = 1;
 			if ((MYRANDOM() & 127) < 32)
 				A = 2;
 			int Penalty = 0;
-			int NA = 0;
+			int NA = 0;   // number of allocations
 			int DEP = ((((HitBank - 1 + 2 * A) & 0xffe)) ^ (MYRANDOM() & 1));
 			// just a complex formula to chose between X and X+1, when X is odd: sorry
 
@@ -1226,7 +1237,7 @@ public:
 			{
 				int i = I + 1;
 				bool Done = false;
-				if (NOSKIP[i])
+				if (NOSKIP[i])  // Bank interleaving
 				{
 					if (gtable[i][GI[i]].u == 0)
 
@@ -1240,7 +1251,7 @@ public:
 							gtable[i][GI[i]].tag = GTAG[i];
 							gtable[i][GI[i]].ctr = (resolveDir) ? 0 : -1;
 							NA++;
-							if (T <= 0)
+							if (T <= 0)  // are 1 + NNN (extra entries) per missprediction allocated?
 							{
 								break;
 							}
@@ -1262,17 +1273,17 @@ public:
 
 					else
 					{
-						Penalty++;
+						Penalty++;   // can not allocate because the entry is useful
 					}
 				}
 
-				if (!Done)
+				if (!Done)    // if not already allocated one entry
 				{
-					i = (I ^ 1) + 1;
+					i = (I ^ 1) + 1;   	// try the interleaved bank?????
 					if (NOSKIP[i])
 					{
 
-						if (gtable[i][GI[i]].u == 0)
+						if (gtable[i][GI[i]].u == 0)   // Allocate if the entry is not useful
 						{
 #ifdef OPTREMP
 							if (abs(2 * gtable[i][GI[i]].ctr + 1) <= 3)
@@ -1326,9 +1337,8 @@ public:
 		//update predictions
 		if (HitBank > 0)
 		{
-			if (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1)
+			if (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1) // Low confidence
 				if (LongestMatchPred != resolveDir)
-
 				{ // acts as a protection
 					if (AltBank > 0)
 					{
@@ -1340,7 +1350,7 @@ public:
 				}
 			ctrupdate(gtable[HitBank][GI[HitBank]].ctr, resolveDir, CWIDTH);
 			//sign changes: no way it can have been useful
-			if (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1)
+			if (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1)  // transition from 0 to -1 or -1 to 0
 				gtable[HitBank][GI[HitBank]].u = 0;
 			if (alttaken == resolveDir)
 				if (AltBank > 0)
@@ -1353,7 +1363,6 @@ public:
 							}
 						}
 		}
-
 		else
 			baseupdate(resolveDir);
 
@@ -1370,6 +1379,7 @@ public:
 
 		//END PREDICTOR UPDATE
 	}
+
 #define GINDEX (((long long)PC) ^ bhist ^ (bhist >> (8 - i)) ^ (bhist >> (16 - 2 * i)) ^ (bhist >> (24 - 3 * i)) ^ (bhist >> (32 - 3 * i)) ^ (bhist >> (40 - 4 * i))) & ((1 << (logs - (i >= (NBR - 2)))) - 1)
 	int Gpredict(UINT64 PC, long long BHIST, int *length,
 							 int8_t **tab, int NBR, int logs, int8_t *W)
@@ -1429,18 +1439,17 @@ public:
 //loop prediction: only used if high confidence
 //skewed associative 4-way
 //At fetch time: speculative
-#define CONFLOOP 15
+#define CONFLOOP 15   // 4-bit counter = 0-15
 	bool getloop(UINT64 PC)
 	{
 		LHIT = -1;
-
 		LI = lindex(PC);
 		LIB = ((PC >> (LOGL - 2)) & ((1 << (LOGL - 2)) - 1));
 		LTAG = (PC >> (LOGL - 2)) & ((1 << 2 * LOOPTAG) - 1);
 		LTAG ^= (LTAG >> LOOPTAG);
 		LTAG = (LTAG & ((1 << LOOPTAG) - 1));
 
-		for (int i = 0; i < 4; i++)
+		for (int i = 0; i < 4; i++) // 4 times because of four way associativity
 		{
 			int index = (LI ^ ((LIB >> i) << 2)) + i;
 
@@ -1482,7 +1491,7 @@ public:
 			}
 
 			ltable[index].CurrentIter++;
-			ltable[index].CurrentIter &= ((1 << WIDTHNBITERLOOP) - 1);
+			ltable[index].CurrentIter &= ((1 << WIDTHNBITERLOOP) - 1); // 10 bit = 0-1023
 			//loop with more than 2** WIDTHNBITERLOOP iterations are not treated correctly; but who cares :-)
 			if (ltable[index].CurrentIter > ltable[index].NbIter)
 			{
@@ -1490,9 +1499,9 @@ public:
 				ltable[index].NbIter = 0;
 				//treat like the 1st encounter of the loop
 			}
-			if (Taken != ltable[index].dir)
+			if (Taken != ltable[index].dir) // The direction was different then the entry point...
 			{
-				if (ltable[index].CurrentIter == ltable[index].NbIter)
+				if (ltable[index].CurrentIter == ltable[index].NbIter) // ... because it was was correcty predicted to terminate at this interation count
 				{
 					if (ltable[index].confid < CONFLOOP)
 						ltable[index].confid++;
@@ -1506,7 +1515,7 @@ public:
 						ltable[index].confid = 0;
 					}
 				}
-				else
+				else // ...because it was not correct predicted.
 				{
 					if (ltable[index].NbIter == 0)
 					{
@@ -1524,17 +1533,17 @@ public:
 				ltable[index].CurrentIter = 0;
 			}
 		}
-		else if (ALLOC)
 
+		else if (ALLOC)
 		{
 			UINT64 X = MYRANDOM() & 3;
 
 			if ((MYRANDOM() & 3) == 0)
-				for (int i = 0; i < 4; i++)
+				for (int i = 0; i < 4; i++) // For way associativity
 				{
 					int LHIT = (X + i) & 3;
 					int index = (LI ^ ((LIB >> LHIT) << 2)) + LHIT;
-					if (ltable[index].age == 0)
+					if (ltable[index].age == 0) // An entry can be replaced only if its age counter is null.
 					{
 						ltable[index].dir = !Taken;
 						// most of mispredictions are on last iterations
