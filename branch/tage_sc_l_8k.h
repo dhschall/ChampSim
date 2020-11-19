@@ -106,11 +106,11 @@ int8_t WI[(1 << LOGSIZEUPS)];
 int8_t WBW[(1 << LOGSIZEUPS)];
 
 #define EWIDTH 6
-int LSUM;
 
 // The two counters used to choose between TAGE ang SC on High Conf TAGE/Low Conf SC
 int8_t FirstH, SecondH;
 
+int LSUM;
 
 #define CONFWIDTH 7						//for the counters in the choser
 #define HISTBUFFERLENGTH 4096 // we use a 4K entries history buffer to store the branch history
