@@ -56,8 +56,8 @@ int8_t *IGEHL[INB];
 int BWm[BWNB] = {16, 8};
 int8_t BWGEHLA[BWNB][(1 << LOGBWNB)] = {{0}};
 
-int8_t *BWGEHL[BWNB];
-long long BWHIST;
+int8_t *BWGEHL[BWNB];  // Backward branch history table
+long long BWHIST;      // Backward branch history
 
 //global branch GEHL
 
@@ -79,9 +79,9 @@ int8_t LGEHLA[LNB][(1 << LOGLNB)] = {{0}};
 int8_t *LGEHL[LNB];
 
 #define LOGLOCAL 6
-#define NLOCAL (1 << LOGLOCAL)
+#define NLOCAL (1 << LOGLOCAL) // 64 Local histories
 #define INDLOCAL ((PC ^ (PC >> 2)) & (NLOCAL - 1))
-long long L_shist[NLOCAL];
+long long L_shist[NLOCAL];     // Local history tables (64x)
 
 //update threshold for the statistical corrector
 #define VARTHRES
@@ -244,6 +244,7 @@ int BI;								// index of the bimodal table
 bool pred_taken;			// prediction
 bool alttaken;				// alternate  TAGEprediction
 bool tage_pred;				// TAGE prediction
+bool _bim_pred, _tage_pred, _loop_pred, _sc_pred;				// predicton of each component separately
 bool LongestMatchPred;
 int HitBank; // longest matching bank
 int AltBank; // alternate matching bank
@@ -675,8 +676,10 @@ public:
 		return (Seed);
 	};
 
+uint _pred_comes_from;
+
 	//  TAGE PREDICTION: same code at fetch or retire time but the index and tags must recomputed
-	void Tagepred(UINT64 PC)
+	void Tagepred(UINT64 PC, int filter=0)
 	{
 		HitBank = 0;
 		AltBank = 0;
@@ -710,11 +713,12 @@ public:
 
 		{
 			// Get Bimodal prediction (default/base prediction)
-			alttaken = getbim();
+			alttaken = _bim_pred = getbim();
 			tage_pred = alttaken;
 			LongestMatchPred = alttaken;
 		}
 
+		if(!filter) {
 		//Look for the bank with longest matching history
 		for (int i = NHIST; i > 0; i--)
 		{
@@ -738,13 +742,15 @@ public:
 					break;
 				}
 		}
+		}
+
 		//computes the prediction and the alternate prediction
 
 		if (HitBank > 0)
 		{
 			if (AltBank > 0)
 			{
-				alttaken = (gtable[AltBank][GI[AltBank]].ctr >= 0);
+				alttaken = _tage_pred = (gtable[AltBank][GI[AltBank]].ctr >= 0); _pred_comes_from = 3;
 				AltConf = (abs(2 * gtable[AltBank][GI[AltBank]].ctr + 1) > 1);
 			}
 			else
@@ -754,35 +760,33 @@ public:
 			//USE_ALT_ON_NA is positive  use the alternate prediction
 
 			bool Huse_alt_on_na = (use_alt_on_na[INDUSEALT] >= 0);
-			if ((!Huse_alt_on_na) || (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) > 1))
-				tage_pred = LongestMatchPred;
-			else
+			if ((!Huse_alt_on_na) || (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) > 1)) {
+				tage_pred = _tage_pred = LongestMatchPred;  _pred_comes_from = 3;
+			}else
 				tage_pred = alttaken;
 
 			HighConf =
-					(abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) >=
-					 (1 << CWIDTH) - 1);     // >= 7 (-4 or 3)
+					(abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) >= (1 << CWIDTH) - 1);     // >= 7 (-4 or 3)
 			LowConf = (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1); // (-1 or 0)
 			MedConf = (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 5); // (-3 or 2)  
 		}
 	}
 
-	uint _pred_comes_from;
-
+	
 	//compute the prediction
-	bool GetPrediction(UINT64 PC)
+	bool GetPrediction(UINT64 PC, int filter)
 	{
 		// computes the TAGE table addresses and the partial tags
 
 		_pred_comes_from = 0;
-		Tagepred(PC);
+		Tagepred(PC, filter);
 		pred_taken = tage_pred;
 #ifndef SC
 		return (tage_pred);
 #endif
 
 #ifdef LOOPPREDICTOR
-		predloop = getloop(PC); // loop prediction
+		predloop = _loop_pred = getloop(PC); // loop prediction
 		if ((WITHLOOP >= 0) && (LVALID)) {
 			pred_taken = predloop;
 			_pred_comes_from = 1;
@@ -819,7 +823,40 @@ public:
 		LSUM += Gpredict(PC, IMLIcount, Im, IGEHL, INB, LOGINB, WI);
 
 #endif
-		bool SCPRED = (LSUM >= 0);
+
+		// get the component with the highest impact.
+		if (warmup_complete[parent_cpu->cpu])
+		{
+			int highest = 0;
+			int ctr = abs(Bias[INDBIAS]);
+			int tmp = abs(BiasSK[INDBIASSK]);
+			if (tmp > ctr) { ctr = tmp; highest = 1; }
+			tmp = abs(BiasBank[INDBIASBANK]);
+			if (tmp > ctr) { ctr = tmp; highest = 2; }
+
+			tmp = abs(Gpredict(PC, GHIST, Gm, GGEHL, GNB, LOGGNB, WG));
+			if (tmp > ctr) { ctr = tmp; highest = 3; }
+			tmp = abs(Gpredict(PC, BWHIST, BWm, BWGEHL, BWNB, LOGBWNB, WBW));
+			if (tmp > ctr) { ctr = tmp; highest = 4; }
+			tmp = abs(Gpredict(PC, L_shist[INDLOCAL], Lm, LGEHL, LNB, LOGLNB, WL));
+			if (tmp > ctr) { ctr = tmp; highest = 5; }
+			tmp = abs(Gpredict(PC, IMLIcount, Im, IGEHL, INB, LOGINB, WI));
+			if (tmp > ctr) { ctr = tmp; highest = 6; }
+
+			switch (highest) {
+				case 0: parent_cpu->bte->second.sc_info.bias++;
+				case 1: parent_cpu->bte->second.sc_info.biassk++;
+				case 2: parent_cpu->bte->second.sc_info.biasbank++;
+				case 3: parent_cpu->bte->second.sc_info.ghist++;
+				case 4: parent_cpu->bte->second.sc_info.bwhist++;
+				case 5: parent_cpu->bte->second.sc_info.lhist++;
+				case 6: parent_cpu->bte->second.sc_info.imli++;
+			}
+		}
+
+
+
+		bool SCPRED = _sc_pred = (LSUM >= 0);
 		THRES = Pupdatethreshold[INDUPD] + (updatethreshold >> 3);
 
 #ifdef VARTHRES
@@ -980,10 +1017,9 @@ public:
 	// PREDICTOR UPDATE
 
 	void UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir,
-											 bool predDir, UINT64 branchTarget)
+											 bool predDir, UINT64 branchTarget, int filter)
 	{
-
-
+		
 		// Write some statistics for the current branch.
 		// where does the prediction come from?
 		bool _t = warmup_complete[parent_cpu->cpu];
@@ -991,22 +1027,35 @@ public:
 			switch (_pred_comes_from) {
 				case 1:
 					parent_cpu->bte->second.tage_info.loop_pred++;
-					if (pred_taken != resolveDir)
-						parent_cpu->bte->second.tage_info.loop_miss++;
 					break;
 				case 2:
 					parent_cpu->bte->second.tage_info.sc_pred++;
-					if (pred_taken != resolveDir)
-						parent_cpu->bte->second.tage_info.sc_miss++;
+					break;
+				case 3:
+					parent_cpu->bte->second.tage_info.tage_pred++;
 					break;
 				default:
-					parent_cpu->bte->second.tage_info.tage_pred++;
-					if (pred_taken != resolveDir)
-						parent_cpu->bte->second.tage_info.tage_miss++;
+					parent_cpu->bte->second.tage_info.bim_pred++;
 					break;
-
 			}
+			if (resolveDir != _loop_pred)
+				parent_cpu->bte->second.tage_info.loop_miss++;
+			if (resolveDir != _sc_pred)
+				parent_cpu->bte->second.tage_info.sc_miss++;
+			if (resolveDir != _tage_pred)
+				parent_cpu->bte->second.tage_info.tage_miss++;
+			if (resolveDir != _bim_pred)
+				parent_cpu->bte->second.tage_info.bim_miss++;
 		}
+
+
+
+		// For filter we update the history only but not any of the tables.
+		// if (filter) {
+		// 	HistoryUpdate(PC, opType, resolveDir, branchTarget,
+		// 								phist, ptghist, ch_i, ch_t[0], ch_t[1]);
+		// 	return;
+		// }
 
 		// parent_cpu->bte->second.tage_info
 
@@ -1024,7 +1073,7 @@ public:
 
 		bool SCPRED = (LSUM >= 0);
 		
-
+		// Update the statical corrector if the
 		if (pred_inter != SCPRED)
 		{
 			
@@ -1043,6 +1092,7 @@ public:
 				}
 		}
 
+		// if statical corrector was not correct
 		if ((SCPRED != resolveDir) || ((abs(LSUM) < THRES)))
 		{
 			{
@@ -1136,15 +1186,9 @@ public:
 			}
 		}
 		// Test what happen if we do not allocate hardest to predict branches.
-		// {
-			// switch (PC) {
-			// 	case 0x405743:
-			// 	case 0x40574a:
-			// 	case 0x40596a:
-			// 		ALLOC = false;
-			// 		break;
-			// }
-		// }
+		if (filter) {
+			ALLOC=false;
+		}
 
 		if (ALLOC)
 		{
@@ -1269,14 +1313,23 @@ public:
 			if (_t) {
 
 				uint n_entries = 0, n_useful_entries = 0;
+				uint n_high_conf = 0, n_med_conf = 0, n_low_conf = 0;
+				uint n_tot_high_conf = 0, n_tot_med_conf = 0, n_tot_low_conf = 0;
+				
 				// First search the lower banks. They are in subsequent order starting at 1
 				int base = 1, size = NBBANK[0] * (1 << LOGG);
 				for (int i = 0; i < size; i++) {
+					
 					if (gtable[base][i].full_pc == PC) {
 						n_entries++;
 						if(gtable[base][i].u != 0) {
 							n_useful_entries++;
 						}
+						// Get confidence
+						int conf = abs(2 * gtable[base][i].ctr + 1);
+						if (conf >= (1 << CWIDTH) - 1) n_high_conf++;
+						if (conf == 1) n_med_conf++;
+						if (conf == 5) n_low_conf++;
 					}
 				}
 				// Secondly search the higher banks. As well in subsequent order starting at BORN
@@ -1287,6 +1340,11 @@ public:
 						if(gtable[base][i].u != 0) {
 							n_useful_entries++;
 						}
+						// Get confidence
+						int conf = abs(2 * gtable[base][i].ctr + 1);
+						if (conf >= (1 << CWIDTH) - 1) n_high_conf++;
+						if (conf == 1) n_med_conf++;
+						if (conf == 5) n_low_conf++;
 					}
 				}
 
@@ -1294,6 +1352,10 @@ public:
 				parent_cpu->bte->second.tage_info.n_entries_alloc += NA;
 				parent_cpu->bte->second.tage_info.utilization += n_entries;
 				parent_cpu->bte->second.tage_info.n_useful_entries += n_useful_entries;
+				
+				parent_cpu->bte->second.tage_info.n_high_conf += n_high_conf;
+				parent_cpu->bte->second.tage_info.n_med_conf += n_med_conf;
+				parent_cpu->bte->second.tage_info.n_low_conf += n_low_conf;
 				
 				if (parent_cpu->bte->second.tage_info.max_util < n_entries) {
 					parent_cpu->bte->second.tage_info.max_util = n_entries;
@@ -1320,7 +1382,7 @@ public:
 					if (AltBank == 0)
 						baseupdate(resolveDir);
 				}
-			if (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1)
+			if (abs(2 * gtable[HitBank][GI[HitBank]].ctr + 1) == 1)  // Low confidence set the usefulness to 0
 				gtable[HitBank][GI[HitBank]].u = 0;
 			//just mute from protected to unprotected
 			ctrupdate(gtable[HitBank][GI[HitBank]].ctr, resolveDir, CWIDTH);
@@ -1354,6 +1416,34 @@ public:
 
 		//END PREDICTOR UPDATE
 	}
+
+
+	void TrackOtherInst(UINT64 PC, OpType opType, bool taken,
+											UINT64 branchTarget)
+	{
+
+		HistoryUpdate(PC, opType, taken, branchTarget, phist,
+									ptghist, ch_i, ch_t[0], ch_t[1]);
+	}
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// Statistical Corrector
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
 
 #define GINDEX (((long long)PC) ^ bhist ^ (bhist >> (8 - i)) ^ (bhist >> (16 - 2 * i)) ^ (bhist >> (24 - 3 * i)) ^ (bhist >> (32 - 3 * i)) ^ (bhist >> (40 - 4 * i))) & ((1 << logs) - 1)
 	int Gpredict(UINT64 PC, long long BHIST, int *length,
@@ -1397,14 +1487,10 @@ public:
 #endif
 	}
 
-	void TrackOtherInst(UINT64 PC, OpType opType, bool taken,
-											UINT64 branchTarget)
-	{
 
-		HistoryUpdate(PC, opType, taken, branchTarget, phist,
-									ptghist, ch_i, ch_t[0], ch_t[1]);
-	}
-
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+// LOOP Predictor
+// ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #ifdef LOOPPREDICTOR
 	int lindex(UINT64 PC)
 	{

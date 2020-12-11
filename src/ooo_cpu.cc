@@ -435,8 +435,30 @@ void O3_CPU::read_from_trace()
 
 
                         // Test: filter out the most missing data dependent branches
-                        uint8_t filter = 0;
-                        // if ((IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4216643) ||
+                        int filter = 0;
+                        // switch (IFETCH_BUFFER.entry[ifetch_buffer_index].ip)
+                        // {
+                        //     // MCF
+                        //     case 0x404233:
+                        //     case 0x40423a:
+                        //     case 0x401a31:
+                        //     case 0x40479d:
+                        //     case 0x40463d:
+                        //     case 0x4056e0:
+                        //         filter = 1;
+                        //         break;
+                            
+                        //     // omnetpp
+                        //     case 0x452a35:
+                        //     case 0x452a37:
+                        //     case 0x452a57:
+                        //     case 0x452a09:
+                        //     case 0x4186f4:
+                        //     case 0x452a7a:
+                        //         filter = 1;
+                        //         break;
+                        // }
+                        // if (( == 4216643) ||
                         //     (IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4216650) ||
                         //     (IFETCH_BUFFER.entry[ifetch_buffer_index].ip == 4217194)
                         //     )
@@ -448,31 +470,29 @@ void O3_CPU::read_from_trace()
                         
                         uint8_t branch_prediction = 0;
                         
-                        if (!filter) {
-                            branch_prediction = predict_branch(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
-                        }
+                        // if (!filter) {
+                        branch_prediction = predict_branch(IFETCH_BUFFER.entry[ifetch_buffer_index].ip, filter);
+                        // }
+                        // if (filter) {
+                        //     branch_prediction = bimodal_bp.predict_branch(IFETCH_BUFFER.entry[ifetch_buffer_index].ip);
+                        // }
 
                         uint64_t predicted_branch_target = IFETCH_BUFFER.entry[ifetch_buffer_index].branch_target;
                         
-
-
-                        
-                        
-
-
-                        
-
-
                         if (branch_prediction == 0)
                         {
                             predicted_branch_target = 0;
                         }
                         // call code prefetcher every time the branch predictor is used
+                        // this is ok because we do not use a prefetcher
                         l1i_prefetcher_branch_operate(IFETCH_BUFFER.entry[ifetch_buffer_index].ip,
                                                       IFETCH_BUFFER.entry[ifetch_buffer_index].branch_type,
                                                       predicted_branch_target);
-
-                        if (IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken != branch_prediction)
+                        
+                        // In case we get a filtered branch we assume perfect prediction.
+                        if (
+                            // !filter &&
+                            IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken != branch_prediction)
                         {
 			                DP(if (warmup_complete[cpu]) { cout << "[BRANCH] misprediction: PC: " << IFETCH_BUFFER.entry[ifetch_buffer_index].ip << endl; });
                             
@@ -497,8 +517,6 @@ void O3_CPU::read_from_trace()
                             }
                         }
 
-                        if (!filter) {
-
                         // #define TAGE_BP 1
 
 #ifdef CHAMPIONSHIP_BP
@@ -507,11 +525,16 @@ void O3_CPU::read_from_trace()
                                                     IFETCH_BUFFER.entry[ifetch_buffer_index].branch_type,
                                                     branch_prediction, 
                                                     IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken,
-                                                    predicted_branch_target);
+                                                    predicted_branch_target, 
+                                                    filter
+                                                    // false
+                                                    );
+                            // if (filter) {
+                            //     bimodal_bp.last_branch_result(IFETCH_BUFFER.entry[ifetch_buffer_index].ip, IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken);
+                            // }
 #else
                             last_branch_result(IFETCH_BUFFER.entry[ifetch_buffer_index].ip, IFETCH_BUFFER.entry[ifetch_buffer_index].branch_taken);
 #endif
-                        }
                     }
 
                     if ((num_reads >= instrs_to_read_this_cycle) || (IFETCH_BUFFER.occupancy == IFETCH_BUFFER.SIZE))
