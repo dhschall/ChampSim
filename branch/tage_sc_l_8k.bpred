@@ -12,16 +12,16 @@ PREDICTOR bp;
 
 void O3_CPU::initialize_branch_predictor()
 {
-    cout << "CPU " << cpu << " TAGE-SC-L 8kB branch predictor" << endl;
-    bp = PREDICTOR();
-    bp.parent_cpu = this;
+    bp = new PREDICTOR();
+    cout << "TAGE-SC-L 8kB branch predictor" << endl;
+    bp->parent_cpu = this;
 }
 
 uint8_t last_pred{false};
 
 uint8_t O3_CPU::predict_branch(uint64_t ip, int filter)
 {
-    return bp.GetPrediction(ip, filter);
+    return bp->GetPrediction(ip, filter);
 }
 
 void O3_CPU::last_branch_result(uint64_t ip, uint8_t taken)
@@ -54,7 +54,7 @@ void O3_CPU::update_branch_predictor(uint64_t ip, uint8_t branch_type, uint8_t p
         break;
     }
     // Update BP
-    bp.UpdatePredictor(
+    bp->UpdatePredictor(
                     ip,
                     opType,
                     taken,

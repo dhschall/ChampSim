@@ -355,11 +355,10 @@ int predictorsize()
 	return (STORAGESIZE);
 }
 
-class PREDICTOR
+class PREDICTOR: public PREDICTOR_BASE
 {
 public:
-	// Accessor to the parent CPU for the analysis.
-	O3_CPU* parent_cpu;
+
 
 	int THRES;
 
@@ -370,6 +369,17 @@ public:
 #ifdef PRINTSIZE
 		predictorsize();
 #endif
+	}
+
+	~PREDICTOR()
+	{
+#ifdef LOOPPREDICTOR
+		delete[] ltable;
+#endif
+
+		delete[] gtable[1];
+		delete[] gtable[BORN];
+		delete[] btable;
 	}
 
 	void reinit()
@@ -774,7 +784,7 @@ uint _pred_comes_from;
 
 	
 	//compute the prediction
-	bool GetPrediction(UINT64 PC, int filter)
+	bool GetPrediction(uint64_t PC, int filter) override
 	{
 		// computes the TAGE table addresses and the partial tags
 
@@ -825,7 +835,7 @@ uint _pred_comes_from;
 #endif
 
 		// get the component with the highest impact.
-		if (warmup_complete[parent_cpu->cpu])
+		if (warmup_complete[0])
 		{
 			int highest = 0;
 			int ctr = abs(Bias[INDBIAS]);
@@ -910,8 +920,8 @@ uint _pred_comes_from;
 		return pred_taken;
 	}
 
-	void HistoryUpdate(UINT64 PC, OpType opType, bool taken,
-										 UINT64 target, long long &X, int &Y,
+	void HistoryUpdate(uint64_t PC, OpType opType, bool taken,
+										 uint64_t target, long long &X, int &Y,
 										 folded_history *H, folded_history *G,
 										 folded_history *J)
 	{
@@ -1016,13 +1026,13 @@ uint _pred_comes_from;
 
 	// PREDICTOR UPDATE
 
-	void UpdatePredictor(UINT64 PC, OpType opType, bool resolveDir,
-											 bool predDir, UINT64 branchTarget, int filter)
+	void UpdatePredictor(uint64_t PC, OpType opType, bool resolveDir,
+											 bool predDir, uint64_t branchTarget, int filter) override
 	{
 		
 		// Write some statistics for the current branch.
 		// where does the prediction come from?
-		bool _t = warmup_complete[parent_cpu->cpu];
+		bool _t = warmup_complete[0];
 		if (_t) {
 			switch (_pred_comes_from) {
 				case 1:

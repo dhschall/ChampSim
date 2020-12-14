@@ -4,7 +4,9 @@
 #include "cache.h"
 #include <unordered_map>
 #include "branch_tracing.h"
+#include "../branch/utils.h"
 #include "../branch/bimodal.h"
+#include "bpred.h"
 
 #ifdef CRC2_COMPILE
 #define STAT_PRINTING_PERIOD 1000000
@@ -221,14 +223,15 @@ class O3_CPU {
 
     uint32_t check_and_add_lsq(uint32_t rob_index);
 
-    // branch predictor
+    PREDICTOR_BASE* bp;
+
+    void initialize_branch_predictor();
+    void update_branch_predictor(uint64_t ip, uint8_t branch_type, uint8_t pred_dir, uint8_t taken, uint64_t branch_target, int filter=0);
+    void last_branch_result(uint64_t ip, uint8_t taken);
     uint8_t predict_branch(uint64_t ip,int filter=0);
-    void    initialize_branch_predictor(),
-            last_branch_result(uint64_t ip, uint8_t taken),
-            // update_branch_predictor(uint64_t ip, uint8_t branch_type, uint8_t pred_dir, uint8_t taken, uint64_t branch_target),
-            update_branch_predictor(uint64_t ip, uint8_t branch_type, uint8_t pred_dir, uint8_t taken, uint64_t branch_target, int filter=0);
     
     Bimodal bimodal_bp;
+
 
   // code prefetching
   void l1i_prefetcher_initialize();
