@@ -59,8 +59,10 @@ long O3_CPU::operate()
     auto phase_instr{std::ceil(num_retired - begin_phase_instr)};
     auto phase_cycle{std::ceil(current_cycle - begin_phase_cycle)};
 
-    fmt::print("Heartbeat CPU {} instructions: {} cycles: {} heartbeat IPC: {:.4g} cumulative IPC: {:.4g} (Simulation time: {:%H hr %M min %S sec})\n", cpu,
-               num_retired, current_cycle, heartbeat_instr / heartbeat_cycle, phase_instr / phase_cycle, elapsed_time());
+    fmt::print("Heartbeat CPU {} instructions: {} cycles: {} heartbeat IPC: {:.4g} cumulative IPC: {:.4g} BrMPKI: {:.4g} (Simulation time: {:%H hr %M min %S sec})\n", cpu,
+               num_retired, current_cycle, heartbeat_instr / heartbeat_cycle, phase_instr / phase_cycle,
+                (1000.0 * std::ceil(sim_stats.total_branch_types[BRANCH_CONDITIONAL])) / std::ceil(num_retired),
+               elapsed_time());
     next_print_instruction += STAT_PRINTING_PERIOD;
 
     last_heartbeat_instr = num_retired;
@@ -73,7 +75,7 @@ long O3_CPU::operate()
 void O3_CPU::initialize()
 {
   // BRANCH PREDICTOR & BTB
-  impl_initialize_branch_predictor();
+  // impl_initialize_branch_predictor();
   impl_initialize_btb();
 }
 
@@ -107,6 +109,7 @@ void O3_CPU::end_phase(unsigned finished_cpu)
 void O3_CPU::initialize_instruction()
 {
   auto instrs_to_read_this_cycle = std::min(FETCH_WIDTH, static_cast<long>(IFETCH_BUFFER_SIZE - std::size(IFETCH_BUFFER)));
+  impl_tick_branch_predictor(0);
 
   while (current_cycle >= fetch_resume_cycle && instrs_to_read_this_cycle > 0 && !std::empty(input_queue)) {
     instrs_to_read_this_cycle--;
@@ -152,7 +155,11 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
   // handle branch prediction for all instructions as at this point we do not know if the instruction is a branch
   sim_stats.total_branch_types[arch_instr.branch_type]++;
   auto [predicted_branch_target, always_taken] = impl_btb_prediction(arch_instr.ip);
-  arch_instr.branch_prediction = impl_predict_branch(arch_instr.ip) || always_taken;
+  auto pred_result = impl_predict_branch(arch_instr.ip);
+  uint8_t bimodal_prediction = pred_result & 1;
+  uint8_t tage_prediction = pred_result >> 1;
+
+  arch_instr.branch_prediction = tage_prediction || always_taken;
   if (arch_instr.branch_prediction == 0)
     predicted_branch_target = 0;
 
@@ -176,6 +183,14 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
       }
     } else {
       stop_fetch = arch_instr.branch_taken; // if correctly predicted taken, then we can't fetch anymore instructions this cycle
+    }
+
+    // Add delay to the fetch resume cycle if TAGE differens from BIM
+    if (BRANCH_PRED_LATENCY && !stop_fetch && (bimodal_prediction != tage_prediction)) {
+      if (!warmup) {
+        fetch_resume_cycle = current_cycle + BRANCH_PRED_LATENCY;
+        stop_fetch = true;
+      }
     }
 
     impl_update_btb(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch_type);
@@ -232,9 +247,12 @@ long O3_CPU::fetch_instruction()
     return x.dib_checked == COMPLETED && !x.fetched;
   };
 
+  constexpr unsigned int LOG2_FETCH_BUFFER_SIZE = 4U;
+
   // Find the chunk of instructions in the block
   auto no_match_ip = [](const auto& lhs, const auto& rhs) {
-    return (lhs.ip >> LOG2_BLOCK_SIZE) != (rhs.ip >> LOG2_BLOCK_SIZE);
+    // return (lhs.ip >> LOG2_BLOCK_SIZE) != (rhs.ip >> LOG2_BLOCK_SIZE);
+    return (lhs.ip >> LOG2_FETCH_BUFFER_SIZE) != (rhs.ip >> LOG2_FETCH_BUFFER_SIZE);
   };
 
   auto l1i_req_begin = std::find_if(std::begin(IFETCH_BUFFER), std::end(IFETCH_BUFFER), fetch_ready);
@@ -301,8 +319,10 @@ long O3_CPU::decode_instruction()
     // Resume fetch
     if (db_entry.branch_mispredicted) {
       // These branches detect the misprediction at decode
-      if ((db_entry.branch_type == BRANCH_DIRECT_JUMP) || (db_entry.branch_type == BRANCH_DIRECT_CALL)
-          || (((db_entry.branch_type == BRANCH_CONDITIONAL) || (db_entry.branch_type == BRANCH_OTHER)) && db_entry.branch_taken == db_entry.branch_prediction)) {
+      if ( (db_entry.branch_type == BRANCH_DIRECT_JUMP)
+        || (db_entry.branch_type == BRANCH_DIRECT_CALL)
+        || (((db_entry.branch_type == BRANCH_CONDITIONAL) || (db_entry.branch_type == BRANCH_OTHER))
+            && db_entry.branch_taken == db_entry.branch_prediction)) {
         // clear the branch_mispredicted bit so we don't attempt to resume fetch again at execute
         db_entry.branch_mispredicted = 0;
         // pay misprediction penalty
@@ -557,7 +577,7 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
   }
 
   if (instr.branch_mispredicted)
-    fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY;
+    fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY * 2;
 }
 
 long O3_CPU::complete_inflight_instruction()

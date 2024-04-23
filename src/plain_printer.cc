@@ -37,6 +37,11 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
 
   fmt::print(stream, "\n{} cumulative IPC: {:.4g} instructions: {} cycles: {}\n", stats.name, std::ceil(stats.instrs()) / std::ceil(stats.cycles()),
              stats.instrs(), stats.cycles());
+  fmt::print(stream, "ZZZ IPC: {:.5g}\n", std::ceil(stats.instrs()) / std::ceil(stats.cycles()));
+  fmt::print(stream, "ZZZ instructions: {}\n", stats.instrs());
+  fmt::print(stream, "ZZZ cycles: {}\n", stats.cycles());
+
+
   fmt::print(stream, "{} Branch Prediction Accuracy: {:.4g}% MPKI: {:.4g} Average ROB Occupancy at Mispredict: {:.4g}\n", stats.name,
              (100.0 * std::ceil(total_branch - total_mispredictions)) / total_branch, (1000.0 * total_mispredictions) / std::ceil(stats.instrs()),
              std::ceil(stats.total_rob_occupancy_at_branch_mispredict) / total_mispredictions);
@@ -49,9 +54,27 @@ void champsim::plain_printer::print(O3_CPU::stats_type stats)
   for (auto [str, idx] : types)
     fmt::print(stream, "{}: {:.3}\n", str, mpkis[idx]);
   fmt::print(stream, "\n");
+
+  uint64_t total_branches = 0;
+  uint64_t total_misp = 0;
+  for (const auto& [str, idx] : types) {
+    fmt::print(stream, "{} Branch Type: {}\n", stats.name, str);
+    fmt::print(stream, "ZZZ {} {}\n", str, stats.total_branch_types[idx]);
+    fmt::print(stream, "ZZZ {}_MISP {}\n", str, stats.branch_type_misses[idx]);
+    fmt::print(stream, "ZZZ {}_MPKI {:.4g}\n", str, mpkis[idx]);
+    total_branches += stats.total_branch_types[idx];
+    total_misp += stats.branch_type_misses[idx];
+  }
+
+  fmt::print(stream, "Total:\n");
+  fmt::print(stream, "ZZZ TOTAL_BR_EXEC {}\n", total_branches);
+  fmt::print(stream, "ZZZ TOTAL_BR_MISP {}\n", total_misp);
+
+
+
 }
 
-void champsim::plain_printer::print(CACHE::stats_type stats)
+void champsim::plain_printer::print(CACHE::stats_type stats, int inst)
 {
   constexpr std::array<std::pair<std::string_view, std::size_t>, 5> types{
       {std::pair{"LOAD", champsim::to_underlying(access_type::LOAD)}, std::pair{"RFO", champsim::to_underlying(access_type::RFO)},
@@ -65,16 +88,22 @@ void champsim::plain_printer::print(CACHE::stats_type stats)
       TOTAL_MISS += stats.misses.at(type.second).at(cpu);
     }
 
-    fmt::print(stream, "{} TOTAL        ACCESS: {:10d} HIT: {:10d} MISS: {:10d}\n", stats.name, TOTAL_HIT + TOTAL_MISS, TOTAL_HIT, TOTAL_MISS);
+    fmt::print(stream, "{} TOTAL        ACCESS: {:10d} HIT: {:10d} MISS: {:10d} MPKI: {:.4g}\n", stats.name, TOTAL_HIT + TOTAL_MISS, TOTAL_HIT, TOTAL_MISS,
+               (1000.0 * TOTAL_MISS) / inst);
     for (const auto& type : types) {
-      fmt::print(stream, "{} {:<12s} ACCESS: {:10d} HIT: {:10d} MISS: {:10d}\n", stats.name, type.first,
-                 stats.hits[type.second][cpu] + stats.misses[type.second][cpu], stats.hits[type.second][cpu], stats.misses[type.second][cpu]);
+      fmt::print(stream, "{} {:<12s} ACCESS: {:10d} HIT: {:10d} MISS: {:10d} MPKI: {:.4g}\n", stats.name, type.first,
+                 stats.hits[type.second][cpu] + stats.misses[type.second][cpu], stats.hits[type.second][cpu], stats.misses[type.second][cpu],
+                 (1000.0 * stats.misses[type.second][cpu]) / inst);
     }
 
     fmt::print(stream, "{} PREFETCH REQUESTED: {:10} ISSUED: {:10} USEFUL: {:10} USELESS: {:10}\n", stats.name, stats.pf_requested, stats.pf_issued,
                stats.pf_useful, stats.pf_useless);
 
     fmt::print(stream, "{} AVERAGE MISS LATENCY: {:.4g} cycles\n", stats.name, stats.avg_miss_latency);
+
+    fmt::print(stream, "ZZZ {}_TOTAL_MISS {}\n", stats.name, TOTAL_MISS);
+    // fmt::print(stream, "ZZZ {}_LOAD_MPKI {}\n", stats.name, TOTAL_MISS);
+
   }
 }
 
@@ -109,11 +138,13 @@ void champsim::plain_printer::print(champsim::phase_stats& stats)
 
   fmt::print(stream, "\nRegion of Interest Statistics\n");
 
-  for (const auto& stat : stats.roi_cpu_stats)
-    print(stat);
+  for (uint j = 0; j < stats.roi_cpu_stats.size(); ++j) {
+    print(stats.roi_cpu_stats[j]);
+  }
 
-  for (const auto& stat : stats.roi_cache_stats)
-    print(stat);
+  for (uint j = 0; j < stats.roi_cache_stats.size(); ++j) {
+    print(stats.roi_cache_stats[j], stats.roi_cpu_stats[0].instrs());
+  }
 
   fmt::print(stream, "\nDRAM Statistics\n");
   for (const auto& stat : stats.roi_dram_stats)

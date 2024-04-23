@@ -53,10 +53,10 @@ def data_getter(prefix, module_name, funcs):
     }
 
 def get_branch_data(module_name):
-    return data_getter('bpred', module_name, ('initialize_branch_predictor', 'last_branch_result', 'predict_branch'))
+    return data_getter('bpred', module_name, ('initialize_branch_predictor', 'last_branch_result', 'predict_branch', 'finish_branch_predictor', 'tick_branch_predictor'))
 
 def get_btb_data(module_name):
-    return data_getter('btb', module_name, ('initialize_btb', 'update_btb', 'btb_prediction'))
+    return data_getter('btb', module_name, ('initialize_btb', 'update_btb', 'btb_prediction', 'btb_final_stats'))
 
 def get_pref_data(module_name, is_instruction_cache=False):
     prefix = 'ipref' if is_instruction_cache else 'pref'
@@ -161,9 +161,13 @@ def get_ooo_cpu_module_lines(branch_data, btb_data):
     branch_prefix = 'b'
     branch_varname = 'B_FLAG'
     branch_variant_data = [
-        ('initialize_branch_predictor',),
+        # ('initialize_branch_predictor',(('std::string', 'model'))),
+        ('initialize_branch_predictor', (('std::string', 'm'), )),
+
         ('last_branch_result', (('uint64_t', 'ip'), ('uint64_t', 'target'), ('uint8_t', 'taken'), ('uint8_t', 'branch_type'))),
-        ('predict_branch', (('uint64_t','ip'),), 'uint8_t', 'std::bit_or')
+        ('predict_branch', (('uint64_t','ip'),), 'uint8_t', 'std::bit_or'),
+        ('tick_branch_predictor', (('int', 'i'), )),
+        ('finish_branch_predictor', (('int', 'i'), )),
     ]
 
     btb_prefix = 't'
@@ -171,7 +175,8 @@ def get_ooo_cpu_module_lines(branch_data, btb_data):
     btb_variant_data = [
         ('initialize_btb',),
         ('update_btb', (('uint64_t','ip'), ('uint64_t','predicted_target'), ('uint8_t','taken'), ('uint8_t','branch_type'))),
-        ('btb_prediction', (('uint64_t','ip'),), 'std::pair<uint64_t, uint8_t>', 'champsim::detail::take_last')
+        ('btb_prediction', (('uint64_t','ip'),), 'std::pair<uint64_t, uint8_t>', 'champsim::detail::take_last'),
+        ('btb_final_stats', (('int', 'i'), )),
     ]
 
     classname = 'O3_CPU::module_model<' + branch_varname + ', ' + btb_varname + '>'

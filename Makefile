@@ -1,13 +1,16 @@
 ROOT_DIR = $(patsubst %/,%,$(dir $(abspath $(firstword $(MAKEFILE_LIST)))))
 
+BPU_DIR = $(ROOT_DIR)/../bpu-analysis
+
 CPPFLAGS += -MMD -I$(ROOT_DIR)/inc
-CXXFLAGS += --std=c++17 -O3 -Wall -Wextra -Wshadow -Wpedantic
+CXXFLAGS += --std=c++17 -O3 -Wall -Wextra -Wshadow -Wpedantic -g
 
 # vcpkg integration
 TRIPLET_DIR = $(patsubst %/,%,$(firstword $(filter-out $(ROOT_DIR)/vcpkg_installed/vcpkg/, $(wildcard $(ROOT_DIR)/vcpkg_installed/*/))))
 CPPFLAGS += -isystem $(TRIPLET_DIR)/include
 LDFLAGS  += -L$(TRIPLET_DIR)/lib -L$(TRIPLET_DIR)/lib/manual-link
-LDLIBS   += -llzma -lz -lbz2 -lfmt
+LDFLAGS  += -L$(BPU_DIR)/build/bpmodels -L$(BPU_DIR)/build/utils
+LDLIBS   += -llzma -lz -lbz2 -lfmt -lbpmodels -lutils -lz
 
 .phony: all all_execs clean configclean test makedirs
 

@@ -45,6 +45,7 @@ int main(int argc, char** argv)
   uint64_t warmup_instructions = 0;
   uint64_t simulation_instructions = std::numeric_limits<uint64_t>::max();
   std::string json_file_name;
+  std::string bp_name;
   std::vector<std::string> trace_names;
 
   auto set_heartbeat_callback = [&](auto) {
@@ -54,6 +55,8 @@ int main(int argc, char** argv)
 
   app.add_flag("-c,--cloudsuite", knob_cloudsuite, "Read all traces using the cloudsuite format");
   app.add_flag("--hide-heartbeat", set_heartbeat_callback, "Hide the heartbeat output");
+  app.add_option("-m,--model", bp_name, "The model of the branch predictor");
+
   auto warmup_instr_option = app.add_option("-w,--warmup-instructions", warmup_instructions, "The number of instructions in the warmup phase");
   auto deprec_warmup_instr_option =
       app.add_option("--warmup_instructions", warmup_instructions, "[deprecated] use --warmup-instructions instead")->excludes(warmup_instr_option);
@@ -66,6 +69,9 @@ int main(int argc, char** argv)
       app.add_option("--json", json_file_name, "The name of the file to receive JSON output. If no name is specified, stdout will be used")->expected(0, 1);
 
   app.add_option("traces", trace_names, "The paths to the traces")->required()->expected(NUM_CPUS)->check(CLI::ExistingFile);
+
+
+
 
   CLI11_PARSE(app, argc, argv);
 
@@ -96,6 +102,10 @@ int main(int argc, char** argv)
   fmt::print("\n*** ChampSim Multicore Out-of-Order Simulator ***\nWarmup Instructions: {}\nSimulation Instructions: {}\nNumber of CPUs: {}\nPage size: {}\n\n",
              phases.at(0).length, phases.at(1).length, std::size(gen_environment.cpu_view()), PAGE_SIZE);
 
+
+  for (O3_CPU& cpu : gen_environment.cpu_view())
+    cpu.impl_initialize_branch_predictor(bp_name);
+
   auto phase_stats = champsim::main(gen_environment, phases, traces);
 
   fmt::print("\nChampSim completed all CPUs\n\n");
@@ -107,6 +117,12 @@ int main(int argc, char** argv)
 
   for (CACHE& cache : gen_environment.cache_view())
     cache.impl_replacement_final_stats();
+
+  for (O3_CPU& cpu : gen_environment.cpu_view()) {
+    cpu.impl_finish_branch_predictor();
+    cpu.impl_btb_final_stats();
+  }
+
 
   if (json_option->count() > 0) {
     if (json_file_name.empty()) {

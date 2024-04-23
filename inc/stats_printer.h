@@ -29,7 +29,7 @@ class plain_printer
   std::ostream& stream;
 
   void print(O3_CPU::stats_type);
-  void print(CACHE::stats_type);
+  void print(CACHE::stats_type, int inst=1);
   void print(DRAM_CHANNEL::stats_type);
 
   template <typename T>

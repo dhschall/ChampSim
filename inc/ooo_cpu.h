@@ -140,6 +140,7 @@ public:
   const long int RETIRE_WIDTH;
   const unsigned BRANCH_MISPREDICT_PENALTY, DISPATCH_LATENCY, DECODE_LATENCY, SCHEDULING_LATENCY, EXEC_LATENCY;
   const long int L1I_BANDWIDTH, L1D_BANDWIDTH;
+  const unsigned BRANCH_PRED_LATENCY;
 
   // branch
   uint64_t fetch_resume_cycle = 0;
@@ -154,6 +155,7 @@ public:
   long operate() override final;
   void begin_phase() override final;
   void end_phase(unsigned cpu) override final;
+  // void finalize() override final;
 
   void initialize_instruction();
   long check_dib();
@@ -195,13 +197,16 @@ public:
   struct module_concept {
     virtual ~module_concept() = default;
 
-    virtual void impl_initialize_branch_predictor() = 0;
+    virtual void impl_initialize_branch_predictor(std::string model="") = 0;
     virtual void impl_last_branch_result(uint64_t ip, uint64_t target, uint8_t taken, uint8_t branch_type) = 0;
     virtual uint8_t impl_predict_branch(uint64_t ip) = 0;
+    virtual void impl_finish_branch_predictor(int inst) = 0;
+    virtual void impl_tick_branch_predictor(int inst) = 0;
 
     virtual void impl_initialize_btb() = 0;
     virtual void impl_update_btb(uint64_t ip, uint64_t predicted_target, uint8_t taken, uint8_t branch_type) = 0;
     virtual std::pair<uint64_t, uint8_t> impl_btb_prediction(uint64_t ip) = 0;
+    virtual void impl_btb_final_stats(int inst) = 0;
   };
 
   template <unsigned long long B_FLAG, unsigned long long T_FLAG>
@@ -209,23 +214,28 @@ public:
     O3_CPU* intern_;
     explicit module_model(O3_CPU* core) : intern_(core) {}
 
-    void impl_initialize_branch_predictor();
+    void impl_initialize_branch_predictor(std::string model="");
     void impl_last_branch_result(uint64_t ip, uint64_t target, uint8_t taken, uint8_t branch_type);
     uint8_t impl_predict_branch(uint64_t ip);
+    void impl_finish_branch_predictor(int inst);
+    void impl_tick_branch_predictor(int inst);
 
     void impl_initialize_btb();
     void impl_update_btb(uint64_t ip, uint64_t predicted_target, uint8_t taken, uint8_t branch_type);
     std::pair<uint64_t, uint8_t> impl_btb_prediction(uint64_t ip);
+    void impl_btb_final_stats(int inst);
   };
 
   std::unique_ptr<module_concept> module_pimpl;
 
-  void impl_initialize_branch_predictor() { module_pimpl->impl_initialize_branch_predictor(); }
+  void impl_initialize_branch_predictor(std::string model="") { module_pimpl->impl_initialize_branch_predictor(model); }
   void impl_last_branch_result(uint64_t ip, uint64_t target, uint8_t taken, uint8_t branch_type)
   {
     module_pimpl->impl_last_branch_result(ip, target, taken, branch_type);
   }
   uint8_t impl_predict_branch(uint64_t ip) { return module_pimpl->impl_predict_branch(ip); }
+  void impl_finish_branch_predictor() { module_pimpl->impl_finish_branch_predictor(roi_instr()); }
+  void impl_tick_branch_predictor(int inst) { module_pimpl->impl_tick_branch_predictor(inst); }
 
   void impl_initialize_btb() { module_pimpl->impl_initialize_btb(); }
   void impl_update_btb(uint64_t ip, uint64_t predicted_target, uint8_t taken, uint8_t branch_type)
@@ -233,6 +243,7 @@ public:
     module_pimpl->impl_update_btb(ip, predicted_target, taken, branch_type);
   }
   std::pair<uint64_t, uint8_t> impl_btb_prediction(uint64_t ip) { return module_pimpl->impl_btb_prediction(ip); }
+  void impl_btb_final_stats() { module_pimpl->impl_btb_final_stats(roi_instr()); }
 
   class builder_conversion_tag
   {
@@ -266,6 +277,7 @@ public:
     unsigned m_dispatch_latency{};
     unsigned m_schedule_latency{};
     unsigned m_execute_latency{};
+    unsigned m_branch_pred_latency{};
 
     CACHE* m_l1i{};
     long int m_l1i_bw{};
@@ -284,6 +296,7 @@ public:
           m_schedule_width(other.m_schedule_width), m_execute_width(other.m_execute_width), m_lq_width(other.m_lq_width), m_sq_width(other.m_sq_width),
           m_retire_width(other.m_retire_width), m_mispredict_penalty(other.m_mispredict_penalty), m_decode_latency(other.m_decode_latency),
           m_dispatch_latency(other.m_dispatch_latency), m_schedule_latency(other.m_schedule_latency), m_execute_latency(other.m_execute_latency),
+          m_branch_pred_latency(other.m_branch_pred_latency),
           m_l1i(other.m_l1i), m_l1i_bw(other.m_l1i_bw), m_l1d_bw(other.m_l1d_bw), m_fetch_queues(other.m_fetch_queues), m_data_queues(other.m_data_queues)
     {
     }
@@ -411,6 +424,11 @@ public:
       m_execute_latency = execute_latency_;
       return *this;
     }
+    self_type& branch_pred_latency(unsigned branch_pred_latency_)
+    {
+      m_branch_pred_latency = branch_pred_latency_;
+      return *this;
+    }
     self_type& l1i(CACHE* l1i_)
     {
       m_l1i = l1i_;
@@ -457,6 +475,7 @@ public:
         SCHEDULER_SIZE(b.m_schedule_width), EXEC_WIDTH(b.m_execute_width), LQ_WIDTH(b.m_lq_width), SQ_WIDTH(b.m_sq_width), RETIRE_WIDTH(b.m_retire_width),
         BRANCH_MISPREDICT_PENALTY(b.m_mispredict_penalty), DISPATCH_LATENCY(b.m_dispatch_latency), DECODE_LATENCY(b.m_decode_latency),
         SCHEDULING_LATENCY(b.m_schedule_latency), EXEC_LATENCY(b.m_execute_latency), L1I_BANDWIDTH(b.m_l1i_bw), L1D_BANDWIDTH(b.m_l1d_bw),
+        BRANCH_PRED_LATENCY(b.m_branch_pred_latency),
         L1I_bus(b.m_cpu, b.m_fetch_queues), L1D_bus(b.m_cpu, b.m_data_queues), l1i(b.m_l1i), module_pimpl(std::make_unique<module_model<B_FLAG, T_FLAG>>(this))
   {
   }
