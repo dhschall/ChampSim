@@ -53,7 +53,7 @@ def data_getter(prefix, module_name, funcs):
     }
 
 def get_branch_data(module_name):
-    return data_getter('bpred', module_name, ('initialize_branch_predictor', 'last_branch_result', 'predict_branch', 'finish_branch_predictor', 'tick_branch_predictor'))
+    return data_getter('bpred', module_name, ('initialize_branch_predictor', 'last_branch_result', 'predict_branch', 'finish_branch_predictor', 'tick_branch_predictor', 'btb_miss', "branch_commit"))
 
 def get_btb_data(module_name):
     return data_getter('btb', module_name, ('initialize_btb', 'update_btb', 'btb_prediction', 'btb_final_stats'))
@@ -168,6 +168,8 @@ def get_ooo_cpu_module_lines(branch_data, btb_data):
         ('predict_branch', (('uint64_t','ip'),), 'uint8_t', 'std::bit_or'),
         ('tick_branch_predictor', (('int', 'i'), )),
         ('finish_branch_predictor', (('int', 'i'), )),
+        ('btb_miss', ),
+        ('branch_commit', ),
     ]
 
     btb_prefix = 't'

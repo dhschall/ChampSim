@@ -129,6 +129,10 @@ phase_stats do_phase(phase_info phase, environment& env, std::vector<tracereader
   std::transform(std::begin(dram.channels), std::end(dram.channels), std::back_inserter(stats.roi_dram_stats),
                  [](const DRAM_CHANNEL& chan) { return chan.roi_stats; });
 
+  auto channels = env.channel_view();
+  std::transform(std::begin(channels), std::end(channels), std::back_inserter(stats.sim_queue_stats), [](const channel& ch) { return ch.sim_stats; });
+  std::transform(std::begin(channels), std::end(channels), std::back_inserter(stats.roi_queue_stats), [](const channel& ch) { return ch.roi_stats; });
+
   return stats;
 }
 

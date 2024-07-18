@@ -21,7 +21,7 @@ from . import util
 pmem_fmtstr = 'MEMORY_CONTROLLER {name}{{{frequency}, {io_freq}, {tRP}, {tRCD}, {tCAS}, {turn_around_time}, {{{_ulptr}}}}};'
 vmem_fmtstr = 'VirtualMemory vmem{{{pte_page_size}, {num_levels}, {minor_fault_penalty}, {dram_name}}};'
 
-queue_fmtstr = 'champsim::channel {name}{{{rq_size}, {pq_size}, {wq_size}, {_offset_bits}, {_queue_check_full_addr:b}}};'
+queue_fmtstr = 'champsim::channel {name}{{"{name}", {rq_size}, {pq_size}, {wq_size}, {_offset_bits}, {_queue_check_full_addr:b}}};'
 
 core_builder_parts = {
     'ifetch_buffer_size': '.ifetch_buffer_size({ifetch_buffer_size})',
@@ -226,6 +226,13 @@ def get_instantiation_lines(cores, caches, ptws, pmem, vmem):
     yield 'std::vector<std::reference_wrapper<PageTableWalker>> ptw_view() override {'
     yield '  return {'
     yield '    ' + ', '.join('{name}'.format(**elem) for elem in ptws)
+    yield '  };'
+    yield '}'
+    yield ''
+
+    yield 'std::vector<std::reference_wrapper<channel>> channel_view() override {'
+    yield '  return {'
+    yield '    ' + ', '.join(['{}_to_{}_queues'.format(ul, ll) for ll,v in upper_levels.items() for ul in v['uppers']])
     yield '  };'
     yield '}'
     yield ''

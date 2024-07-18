@@ -45,6 +45,16 @@ typedef enum {
 } BrType;
 
 
+// enum branch_type {
+//   NOT_BRANCH = 0,
+//   BRANCH_DIRECT_JUMP = 1,
+//   BRANCH_INDIRECT = 2,
+//   BRANCH_CONDITIONAL = 3,
+//   BRANCH_DIRECT_CALL = 4,
+//   BRANCH_INDIRECT_CALL = 5,
+//   BRANCH_RETURN = 6,
+//   BRANCH_OTHER = 7
+// };
 
 
 
@@ -71,7 +81,7 @@ class BasePredictor {
     virtual bool GetPrediction(uint64_t PC) = 0;
     virtual void FirstTimeUpdate(uint64_t PC, bool taken,
                                 uint64_t branchTarget) {};
-    virtual void UpdatePredictor(uint64_t PC, OpType opType, bool resolveDir,
+    virtual void UpdatePredictor(uint64_t PC, bool resolveDir,
                                  bool predDir, uint64_t branchTarget) = 0;
 
     virtual void TrackOtherInst(uint64_t PC, OpType opType, bool taken,
@@ -82,7 +92,12 @@ class BasePredictor {
     virtual void LoadTables(std::string filename) {};
     virtual void StartTracer(std::string filename) {};
     virtual void tick() {};
+    virtual void resetStats() {};
+    virtual void btbMiss() {};
+    virtual void setState(bool warmup=false) {};
+    virtual void commit() {};
 };
+
 
 
 BasePredictor* CreateBP(std::string bp_name);

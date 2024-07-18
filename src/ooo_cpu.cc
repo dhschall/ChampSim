@@ -29,6 +29,7 @@
 #include <fmt/chrono.h>
 #include <fmt/core.h>
 #include <fmt/ranges.h>
+// #include <>
 
 std::chrono::seconds elapsed_time();
 
@@ -36,20 +37,82 @@ long O3_CPU::operate()
 {
   long progress{0};
 
-  progress += retire_rob();                    // retire
-  progress += complete_inflight_instruction(); // finalize execution
-  progress += execute_instruction();           // execute instructions
-  progress += schedule_instruction();          // schedule instructions
-  progress += handle_memory_return();          // finalize memory transactions
-  progress += operate_lsq();                   // execute memory transactions
+  long proc{0};
+  proc = retire_rob();                    // retire
+  progress += proc;
+  // sim_stats.ret_inst.insert(proc);
+  bool stall = proc < RETIRE_WIDTH;         // stall if we can't retire all instructions
+  if (stall) sim_stats.stall_retire += RETIRE_WIDTH - proc;
 
-  progress += dispatch_instruction(); // dispatch
-  progress += decode_instruction();   // decode
+
+  proc = complete_inflight_instruction(); // finalize execution
+  progress += proc;
+  // sim_stats.complete_inst.insert(proc);
+
+  proc = execute_instruction();           // execute instructions
+  progress += proc;
+  // sim_stats.exec_inst.insert(proc);
+
+  proc = schedule_instruction();          // schedule instructions
+  progress += proc;
+  // sim_stats.sched_inst.insert(proc);
+
+  progress += handle_memory_return();          // finalize memory transactions
+
+  proc = operate_lsq();                   // execute memory transactions
+  progress += proc;
+  // sim_stats.lsq_inst.insert(proc);
+
+  // sim_stats.lq_if.insert(std::count_if(std::begin(LQ), std::end(LQ), [](const auto& lq_entry) { return lq_entry->fetch_issued; }));
+  // sim_stats.sq_if.insert(std::count_if(std::begin(SQ), std::end(SQ), [](const auto& lq_entry) { return lq_entry.fetch_issued; }));
+
+
+  proc = dispatch_instruction(); // dispatch
+  progress += proc;
+  // sim_stats.disp_inst.insert(proc);
+  // if (stall && proc < DISPATCH_WIDTH) sim_stats.stall_dispatch += DISPATCH_WIDTH - proc;
+  proc += decode_instruction();   // decode
+  progress += proc;
+  // sim_stats.dec_inst.insert(proc);
+  // if (stall && proc < DECODE_WIDTH) sim_stats.stall_decode += DECODE_WIDTH - proc;
   progress += promote_to_decode();
 
-  progress += fetch_instruction(); // fetch
+  proc += fetch_instruction(); // fetch
+  progress += proc;
+  // sim_stats.fetch_inst.insert(proc);
+  // if (stall && proc < FETCH_WIDTH) sim_stats.stall_fetch += FETCH_WIDTH - proc;
+
+  static uint64_t stall_latency = std::numeric_limits<uint64_t>::max();
+  if (stall && (std::size(IFETCH_BUFFER) > 0) && (std::begin(IFETCH_BUFFER)->fetched != COMPLETED)) {
+    sim_stats.stall_l1i_head++;
+    if (stall_latency == std::numeric_limits<uint64_t>::max()) {
+      stall_latency = current_cycle;
+      sim_stats.total_icache_stall_count++;
+    }
+  } else {
+    if (stall_latency != std::numeric_limits<uint64_t>::max()) {
+      sim_stats.total_icache_stall_latency += current_cycle - stall_latency;
+      stall_latency = std::numeric_limits<uint64_t>::max();
+    }
+  }
+
   progress += check_dib();
   initialize_instruction();
+
+
+  // auto ifb_ready = std::find_if(std::begin(IFETCH_BUFFER), std::end(IFETCH_BUFFER), [](const ooo_model_instr& x) { return x.fetched == COMPLETED; });
+  // sim_stats.total_ifb_fetched_head += std::distance(std::begin(IFETCH_BUFFER), ifb_ready);
+
+  for (const auto& x : IFETCH_BUFFER) {
+    if (x.dib_checked == COMPLETED && !x.fetched)
+      sim_stats.total_ifb_need_fetch++;
+    if (x.fetched == INFLIGHT)
+      sim_stats.total_ifb_inflight++;
+    if (x.fetched == COMPLETED)
+      sim_stats.total_ifb_fetched++;
+    if (x.dib_checked == COMPLETED)
+      sim_stats.total_ifb_checked++;
+  }
 
   // heartbeat
   if (show_heartbeat && (num_retired >= next_print_instruction)) {
@@ -68,6 +131,8 @@ long O3_CPU::operate()
     last_heartbeat_instr = num_retired;
     last_heartbeat_cycle = current_cycle;
   }
+
+  sim_stats.rob_occupancy_hist.insert(std::size(ROB));
 
   return progress;
 }
@@ -108,15 +173,26 @@ void O3_CPU::end_phase(unsigned finished_cpu)
 
 void O3_CPU::initialize_instruction()
 {
-  auto instrs_to_read_this_cycle = std::min(FETCH_WIDTH, static_cast<long>(IFETCH_BUFFER_SIZE - std::size(IFETCH_BUFFER)));
+  // auto instrs_to_read_this_cycle = std::min(FETCH_WIDTH, static_cast<long>(IFETCH_BUFFER_SIZE - std::size(IFETCH_BUFFER)));
+  auto instrs_to_read_this_cycle = static_cast<long>(IFETCH_BUFFER_SIZE - std::size(IFETCH_BUFFER));
   impl_tick_branch_predictor(0);
+  sim_stats.total_ifetch_buffer_occupancy += std::size(IFETCH_BUFFER);
+
+  long ninst = 0;
+  bool stop_branch = false;
+
+  if (instrs_to_read_this_cycle == 0) {
+    sim_stats.total_inst_fetched_full_cycle++;
+  }
 
   while (current_cycle >= fetch_resume_cycle && instrs_to_read_this_cycle > 0 && !std::empty(input_queue)) {
     instrs_to_read_this_cycle--;
-
+    ninst++;
     auto stop_fetch = do_init_instruction(input_queue.front());
-    if (stop_fetch)
+    if (stop_fetch) {
       instrs_to_read_this_cycle = 0;
+      stop_branch = true;
+    }
 
     // Add to IFETCH_BUFFER
     IFETCH_BUFFER.push_back(input_queue.front());
@@ -124,6 +200,28 @@ void O3_CPU::initialize_instruction()
 
     IFETCH_BUFFER.back().event_cycle = current_cycle;
   }
+
+  sim_stats.total_inst_fetched += ninst;
+  if (ninst) {
+    sim_stats.total_inst_fetched_cycle++;
+    if (stop_branch) {
+      sim_stats.total_inst_fetched_stop_br_cycle++;
+      sim_stats.total_inst_fetched_stop_br += ninst;
+    } else if (!instrs_to_read_this_cycle) {
+      sim_stats.total_inst_fetched_full2_cycle++;
+    } else if (current_cycle < fetch_resume_cycle)
+      sim_stats.total_inst_fetched_stall2_cycle++;
+  } else {
+    if (std::empty(input_queue)) {
+      sim_stats.total_inst_fetched_stop_ie_cycle++;
+    }
+    if (current_cycle < fetch_resume_cycle) {
+      sim_stats.total_inst_fetched_stall_cycle++;
+    }
+  }
+
+
+
 }
 
 namespace
@@ -154,14 +252,54 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
 
   // handle branch prediction for all instructions as at this point we do not know if the instruction is a branch
   sim_stats.total_branch_types[arch_instr.branch_type]++;
+
+  if (arch_instr.branch_type==NOT_BRANCH) {
+    arch_instr.is_branch = false;
+  }
+
+  if (!arch_instr.is_branch) {
+    return stop_fetch;
+  }
+
+
   auto [predicted_branch_target, always_taken] = impl_btb_prediction(arch_instr.ip);
   auto pred_result = impl_predict_branch(arch_instr.ip);
   uint8_t bimodal_prediction = pred_result & 1;
   uint8_t tage_prediction = pred_result >> 1;
 
   arch_instr.branch_prediction = tage_prediction || always_taken;
+
+  // perfect branch prediction
+  if (perfect_cond_branch && (arch_instr.branch_type == BRANCH_CONDITIONAL)) {
+    arch_instr.branch_prediction = arch_instr.branch_taken;
+  }
+  if (perfect_branch) {
+    arch_instr.branch_prediction = arch_instr.branch_taken;
+  }
+  if (perfect_btb) {
+    predicted_branch_target = arch_instr.branch_target;
+  }
+  if (perfect_indirect && ((arch_instr.branch_type == BRANCH_INDIRECT)
+                        || (arch_instr.branch_type == BRANCH_INDIRECT_CALL)|| (arch_instr.branch_type == BRANCH_RETURN))) {
+    predicted_branch_target = arch_instr.branch_target;
+  }
+
+  if (arch_instr.branch_type == BRANCH_RETURN) {
+   predicted_branch_target = arch_instr.branch_target;
+  }
+
+  if (arch_instr.branch_type == BRANCH_CONDITIONAL) {
+    if (arch_instr.branch_taken && (arch_instr.branch_target != predicted_branch_target))
+      sim_stats.target_misses++;
+
+    if (arch_instr.branch_taken != arch_instr.branch_prediction)
+      sim_stats.cond_branch_misses++;
+  }
+
+
   if (arch_instr.branch_prediction == 0)
     predicted_branch_target = 0;
+
 
   if (arch_instr.is_branch) {
     if constexpr (champsim::debug_print) {
@@ -194,7 +332,11 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
     }
 
     impl_update_btb(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch_type);
+    // printf("%i Update BPU: %lx, %i\n", current_cycle, arch_instr.ip, arch_instr.branch_type);
     impl_last_branch_result(arch_instr.ip, arch_instr.branch_target, arch_instr.branch_taken, arch_instr.branch_type);
+    if (arch_instr.branch_taken && (arch_instr.branch_target != predicted_branch_target)) {
+      impl_btb_miss();
+    }
   }
 
   return stop_fetch;
@@ -203,6 +345,7 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
 bool O3_CPU::do_init_instruction(ooo_model_instr& arch_instr)
 {
   // fast warmup eliminates register dependencies between instructions branch predictor, cache contents, and prefetchers are still warmed up
+  // if (warmup || false) {
   if (warmup) {
     arch_instr.source_registers.clear();
     arch_instr.destination_registers.clear();
@@ -266,11 +409,17 @@ long O3_CPU::fetch_instruction()
     if (success) {
       std::for_each(l1i_req_begin, l1i_req_end, [](auto& x) { x.fetched = INFLIGHT; });
       ++progress;
+      sim_stats.total_inst_per_fetch += std::distance(l1i_req_begin, l1i_req_end);
+    } else {
+      sim_stats.stall_l1i++;
     }
 
     l1i_req_begin = std::find_if(l1i_req_end, std::end(IFETCH_BUFFER), fetch_ready);
   }
 
+  sim_stats.total_l1ib_occupancy += L1I_bus.lower_level->rq_occupancy();
+  sim_stats.total_fetched += progress;
+  if (progress) sim_stats.cycle_fetched++;
   return progress;
 }
 
@@ -293,21 +442,32 @@ bool O3_CPU::do_fetch_instruction(std::deque<ooo_model_instr>::iterator begin, s
 long O3_CPU::promote_to_decode()
 {
   auto available_fetch_bandwidth = std::min<long>(FETCH_WIDTH, DECODE_BUFFER_SIZE - std::size(DECODE_BUFFER));
+  sim_stats.total_decode_buffer_occupancy += std::size(DECODE_BUFFER);
+
+  auto icache_ready = [cycle = current_cycle](const auto& x) { return x.fetched == COMPLETED && x.event_cycle <= cycle; };
+
   auto [window_begin, window_end] = champsim::get_span_p(std::begin(IFETCH_BUFFER), std::end(IFETCH_BUFFER), available_fetch_bandwidth,
-                                                         [cycle = current_cycle](const auto& x) { return x.fetched == COMPLETED && x.event_cycle <= cycle; });
+                                                         icache_ready);
   long progress{std::distance(window_begin, window_end)};
+  // if (!icache_ready(*window_begin)) {
+  //   // If the instruction is ready, promote it to the decode buffer
+  //   sim_stats.stall_l1i_head++;
+  // }
 
   std::for_each(window_begin, window_end,
                 [cycle = current_cycle, lat = DECODE_LATENCY, warmup = warmup](auto& x) { return x.event_cycle = cycle + ((warmup || x.decoded) ? 0 : lat); });
   std::move(window_begin, window_end, std::back_inserter(DECODE_BUFFER));
   IFETCH_BUFFER.erase(window_begin, window_end);
 
+  sim_stats.total_promoted += progress;
+  if (progress) sim_stats.cycle_promoted++;
   return progress;
 }
 
 long O3_CPU::decode_instruction()
 {
   auto available_decode_bandwidth = std::min<long>(DECODE_WIDTH, DISPATCH_BUFFER_SIZE - std::size(DISPATCH_BUFFER));
+  sim_stats.total_dispatch_buffer_occupancy += std::size(DISPATCH_BUFFER);
   auto [window_begin, window_end] = champsim::get_span_p(std::begin(DECODE_BUFFER), std::end(DECODE_BUFFER), available_decode_bandwidth,
                                                          [cycle = current_cycle](const auto& x) { return x.event_cycle <= cycle; });
   long progress{std::distance(window_begin, window_end)};
@@ -327,6 +487,7 @@ long O3_CPU::decode_instruction()
         db_entry.branch_mispredicted = 0;
         // pay misprediction penalty
         this->fetch_resume_cycle = this->current_cycle + BRANCH_MISPREDICT_PENALTY;
+        impl_btb_miss();
       }
     }
 
@@ -337,6 +498,8 @@ long O3_CPU::decode_instruction()
   std::move(window_begin, window_end, std::back_inserter(DISPATCH_BUFFER));
   DECODE_BUFFER.erase(window_begin, window_end);
 
+  sim_stats.total_decoded += progress;
+  if (progress) sim_stats.cycle_decoded++;
   return progress;
 }
 
@@ -358,7 +521,10 @@ long O3_CPU::dispatch_instruction()
     available_dispatch_bandwidth--;
   }
 
-  return DISPATCH_WIDTH - available_dispatch_bandwidth;
+  auto progress{DISPATCH_WIDTH - available_dispatch_bandwidth};
+  sim_stats.total_dispatched += progress;
+  if (progress) sim_stats.cycle_dispatched++;
+  return progress;
 }
 
 long O3_CPU::schedule_instruction()
@@ -375,6 +541,8 @@ long O3_CPU::schedule_instruction()
       --search_bw;
   }
 
+  sim_stats.total_scheduled += progress;
+  if (progress) sim_stats.cycle_scheduled++;
   return progress;
 }
 
@@ -390,6 +558,9 @@ void O3_CPU::do_scheduling(ooo_model_instr& instr)
       }
     }
   }
+
+  sim_stats.inst_dep_hist.insert(instr.num_reg_dependent);
+
 
   for (auto dreg : instr.destination_registers) {
     auto begin = std::begin(reg_producers[dreg]);
@@ -412,6 +583,8 @@ long O3_CPU::execute_instruction()
     }
   }
 
+  sim_stats.total_executed += EXEC_WIDTH - exec_bw;
+  if (EXEC_WIDTH - exec_bw) sim_stats.cycle_executed++;
   return EXEC_WIDTH - exec_bw;
 }
 
@@ -576,8 +749,14 @@ void O3_CPU::do_complete_execution(ooo_model_instr& instr)
       dependent.scheduled = COMPLETED;
   }
 
-  if (instr.branch_mispredicted)
-    fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY * 2;
+  if (instr.branch_mispredicted) {
+    impl_btb_miss();
+    fetch_resume_cycle = current_cycle + BRANCH_MISPREDICT_PENALTY; // * 2;
+  }
+  if (instr.is_branch) {
+    impl_branch_commit();
+  }
+
 }
 
 long O3_CPU::complete_inflight_instruction()
@@ -596,7 +775,7 @@ long O3_CPU::complete_inflight_instruction()
 
 long O3_CPU::handle_memory_return()
 {
-  long progress{0};
+  long progressi{0}, progressd{0};
 
   for (auto l1i_bw = FETCH_WIDTH, to_read = L1I_BANDWIDTH; l1i_bw > 0 && to_read > 0 && !L1I_bus.lower_level->returned.empty(); --to_read) {
     auto& l1i_entry = L1I_bus.lower_level->returned.front();
@@ -606,7 +785,7 @@ long O3_CPU::handle_memory_return()
       if ((fetched.ip >> LOG2_BLOCK_SIZE) == (l1i_entry.v_address >> LOG2_BLOCK_SIZE) && fetched.fetched != 0) {
         fetched.fetched = COMPLETED;
         --l1i_bw;
-        ++progress;
+        ++progressi;
 
         if constexpr (champsim::debug_print) {
           fmt::print("[IFETCH] {} instr_id: {} fetch completed\n", __func__, fetched.instr_id);
@@ -619,7 +798,7 @@ long O3_CPU::handle_memory_return()
     // remove this entry if we have serviced all of its instructions
     if (l1i_entry.instr_depend_on_me.empty()) {
       L1I_bus.lower_level->returned.pop_front();
-      ++progress;
+      ++progressi;
     }
   }
 
@@ -629,14 +808,16 @@ long O3_CPU::handle_memory_return()
       if (lq_entry.has_value() && lq_entry->fetch_issued && lq_entry->virtual_address >> LOG2_BLOCK_SIZE == l1d_it->v_address >> LOG2_BLOCK_SIZE) {
         lq_entry->finish(std::begin(ROB), std::end(ROB));
         lq_entry.reset();
-        ++progress;
+        ++progressd;
       }
     }
-    ++progress;
+    ++progressd;
   }
   L1D_bus.lower_level->returned.erase(std::begin(L1D_bus.lower_level->returned), l1d_it);
 
-  return progress;
+  sim_stats.total_iread += progressi;
+  sim_stats.total_dread += progressd;
+  return progressi + progressd;
 }
 
 long O3_CPU::retire_rob()
@@ -649,6 +830,8 @@ long O3_CPU::retire_rob()
   num_retired += retire_count;
   ROB.erase(retire_begin, retire_end);
 
+  sim_stats.total_retired += retire_count;
+  if (retire_count) sim_stats.cycle_retired++;
   return retire_count;
 }
 

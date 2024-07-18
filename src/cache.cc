@@ -301,7 +301,7 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
 
   inflight_writes.emplace_back(handle_pkt, current_cycle);
   inflight_writes.back().event_cycle = current_cycle + (warmup ? 0 : FILL_LATENCY);
-    
+
   ++sim_stats.misses[champsim::to_underlying(handle_pkt.type)][handle_pkt.cpu];
 
   return true;
@@ -717,6 +717,7 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.pf_fill = sim_stats.pf_fill;
 
   for (auto ul : upper_levels) {
+    ul->roi_stats.name = ul->name;
     ul->roi_stats.RQ_ACCESS = ul->sim_stats.RQ_ACCESS;
     ul->roi_stats.RQ_MERGED = ul->sim_stats.RQ_MERGED;
     ul->roi_stats.RQ_FULL = ul->sim_stats.RQ_FULL;

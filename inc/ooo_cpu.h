@@ -40,6 +40,7 @@
 #include "operable.h"
 #include "util/lru_table.h"
 #include <type_traits>
+#include "util/histogram.h"
 
 enum STATUS { INFLIGHT = 1, COMPLETED = 2 };
 
@@ -66,12 +67,86 @@ struct cpu_stats {
   uint64_t begin_instrs = 0, begin_cycles = 0;
   uint64_t end_instrs = 0, end_cycles = 0;
   uint64_t total_rob_occupancy_at_branch_mispredict = 0;
+  uint64_t total_ifetch_buffer_occupancy = 0;
+  uint64_t total_dispatch_buffer_occupancy = 0;
+  uint64_t total_decode_buffer_occupancy = 0;
+  uint64_t total_l1ib_occupancy = 0;
+  uint64_t total_ifb_inflight = 0;
+  uint64_t total_ifb_need_fetch = 0;
+  uint64_t total_ifb_fetched = 0;
+  uint64_t total_ifb_fetched_head = 0;
+  uint64_t total_ifb_fetched_head2 = 0;
+  uint64_t total_ifb_checked = 0;
+  uint64_t total_retired = 0;
+  uint64_t cycle_retired = 0;
+  uint64_t total_executed = 0;
+  uint64_t cycle_executed = 0;
+  uint64_t total_scheduled = 0;
+  uint64_t cycle_scheduled = 0;
+  uint64_t total_dispatched = 0;
+  uint64_t cycle_dispatched = 0;
+  uint64_t total_decoded = 0;
+  uint64_t cycle_decoded = 0;
+  uint64_t total_fetched = 0;
+  uint64_t cycle_fetched = 0;
+  uint64_t total_promoted = 0;
+  uint64_t cycle_promoted = 0;
+  uint64_t total_iread = 0;
+  uint64_t total_dread = 0;
+  uint64_t stall_retire = 0;
+  uint64_t stall_exec = 0;
+  uint64_t stall_schedule = 0;
+  uint64_t stall_dispatch = 0;
+  uint64_t stall_decode = 0;
+  uint64_t stall_fetch = 0;
+  uint64_t stall_l1i = 0;
+  uint64_t stall_l1i_head = 0;
+  uint64_t stall_l1i_head2 = 0;
+  uint64_t total_inst_per_fetch = 0;
+  uint64_t total_icache_stall_latency = 0;
+  uint64_t total_icache_stall_count = 0;
+  uint64_t total_inst_fetched = 0;
+  uint64_t total_inst_fetched_cycle = 0;
+  uint64_t total_inst_fetched_stop_br = 0;
+  uint64_t total_inst_fetched_stop_br_cycle = 0;
+  uint64_t total_inst_fetched_stop_ie_cycle = 0;
+  uint64_t total_inst_fetched_full_cycle = 0;
+  uint64_t total_inst_fetched_full2_cycle = 0;
+  uint64_t total_inst_fetched_stall_cycle = 0;
+  uint64_t total_inst_fetched_stall2_cycle = 0;
+
+#define WIDTH 6
+
+  Histogram<uint64_t,0,512,8> ifb_inflight_hist;
+  Histogram<uint64_t,0,512,8> rob_occupancy_hist;
+  Histogram<uint64_t,0,WIDTH,WIDTH> inst_dep_hist;
+  Histogram<uint64_t,0,WIDTH,WIDTH> ret_inst;
+  Histogram<uint64_t,0,WIDTH,WIDTH> complete_inst;
+  Histogram<uint64_t,0,WIDTH,WIDTH> exec_inst;
+  Histogram<uint64_t,0,WIDTH,WIDTH> sched_inst;
+  Histogram<uint64_t,0,WIDTH,WIDTH> lsq_inst;
+  Histogram<uint64_t,0,WIDTH,WIDTH> disp_inst;
+  Histogram<uint64_t,0,WIDTH,WIDTH> dec_inst;
+  Histogram<uint64_t,0,WIDTH,WIDTH> fetch_inst;
+  Histogram<uint64_t,0,256,8> lq_if;
+  Histogram<uint64_t,0,256,8> sq_if;
+
 
   std::array<long long, 8> total_branch_types = {};
   std::array<long long, 8> branch_type_misses = {};
+  int target_misses = 0;
+  int cond_branch_misses = 0;
+
+  int last_branch_mispredict = 0;
 
   uint64_t instrs() const { return end_instrs - begin_instrs; }
   uint64_t cycles() const { return end_cycles - begin_cycles; }
+
+  // cpu_stats()
+  //   : ifb_inflight_hist(0,512,8),
+  //     rob_occupancy_hist(0,512,8),
+  //     inst_dep_hist(0,4,4) {}
+
 };
 
 struct LSQ_ENTRY {
@@ -109,6 +184,10 @@ public:
   uint64_t num_retired = 0;
 
   bool show_heartbeat = true;
+  bool perfect_branch = false;
+  bool perfect_cond_branch = false;
+  bool perfect_btb = false;
+  bool perfect_indirect = false;
 
   using stats_type = cpu_stats;
 
@@ -145,7 +224,7 @@ public:
   // branch
   uint64_t fetch_resume_cycle = 0;
 
-  const long IN_QUEUE_SIZE = 2 * FETCH_WIDTH;
+  const long IN_QUEUE_SIZE = IFETCH_BUFFER_SIZE;
   std::deque<ooo_model_instr> input_queue;
 
   CacheBus L1I_bus, L1D_bus;
@@ -202,6 +281,8 @@ public:
     virtual uint8_t impl_predict_branch(uint64_t ip) = 0;
     virtual void impl_finish_branch_predictor(int inst) = 0;
     virtual void impl_tick_branch_predictor(int inst) = 0;
+    virtual void impl_btb_miss() = 0;
+    virtual void impl_branch_commit() = 0;
 
     virtual void impl_initialize_btb() = 0;
     virtual void impl_update_btb(uint64_t ip, uint64_t predicted_target, uint8_t taken, uint8_t branch_type) = 0;
@@ -219,6 +300,8 @@ public:
     uint8_t impl_predict_branch(uint64_t ip);
     void impl_finish_branch_predictor(int inst);
     void impl_tick_branch_predictor(int inst);
+    void impl_btb_miss();
+    void impl_branch_commit();
 
     void impl_initialize_btb();
     void impl_update_btb(uint64_t ip, uint64_t predicted_target, uint8_t taken, uint8_t branch_type);
@@ -228,7 +311,22 @@ public:
 
   std::unique_ptr<module_concept> module_pimpl;
 
-  void impl_initialize_branch_predictor(std::string model="") { module_pimpl->impl_initialize_branch_predictor(model); }
+  void impl_initialize_branch_predictor(std::string model="")
+  {
+    if (model == "perfectAll") {
+      perfect_branch = true;
+      perfect_cond_branch = true;
+      perfect_btb = true;
+    } else if (model == "perfectBranch")
+      perfect_branch = true;
+    else if (model == "perfectCond")
+      perfect_cond_branch = true;
+    else if (model == "perfectBTB")
+      perfect_btb = true;
+    else if (model == "perfectIndirect")
+      perfect_indirect = true;
+    module_pimpl->impl_initialize_branch_predictor(model);
+  }
   void impl_last_branch_result(uint64_t ip, uint64_t target, uint8_t taken, uint8_t branch_type)
   {
     module_pimpl->impl_last_branch_result(ip, target, taken, branch_type);
@@ -236,6 +334,8 @@ public:
   uint8_t impl_predict_branch(uint64_t ip) { return module_pimpl->impl_predict_branch(ip); }
   void impl_finish_branch_predictor() { module_pimpl->impl_finish_branch_predictor(roi_instr()); }
   void impl_tick_branch_predictor(int inst) { module_pimpl->impl_tick_branch_predictor(inst); }
+  void impl_btb_miss() { module_pimpl->impl_btb_miss(); }
+  void impl_branch_commit() { module_pimpl->impl_branch_commit(); }
 
   void impl_initialize_btb() { module_pimpl->impl_initialize_btb(); }
   void impl_update_btb(uint64_t ip, uint64_t predicted_target, uint8_t taken, uint8_t branch_type)

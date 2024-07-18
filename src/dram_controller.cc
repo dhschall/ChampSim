@@ -48,6 +48,7 @@ long MEMORY_CONTROLLER::operate()
   initiate_requests();
 
   for (auto& channel : channels) {
+    // if (warmup || true) {
     if (warmup) {
       for (auto& entry : channel.RQ) {
         if (entry.has_value()) {
@@ -312,6 +313,7 @@ bool MEMORY_CONTROLLER::add_rq(const request_type& packet, champsim::channel* ul
     return true;
   }
 
+  ++channel.sim_stats.RQ_FULL;
   return false;
 }
 

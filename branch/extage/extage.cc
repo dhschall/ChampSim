@@ -68,11 +68,18 @@ BasePredictor* brpred;
 
 int bim_mispredictions = 0;
 int tage_mispredictions = 0;
+int warm_misp = 0;
+int first_time_misses = 0;
+bool _warmup = true;
 
 
 void O3_CPU::initialize_branch_predictor(std::string model)
 {
- brpred = CreateBP(model);
+    if (model.find("perfect") != std::string::npos) {
+        model = "extage64kscl";
+    }
+    brpred = CreateBP(model);
+    brpred->setState(warmup);
 }
 
 
@@ -95,8 +102,10 @@ constexpr std::array<std::pair<std::string_view, std::size_t>, 6> types{
 
     printf("ZZZ BIM_MISPREDICTIONS %d\n", bim_mispredictions);
     printf("ZZZ TAGE_MISPREDICTIONS %d\n", tage_mispredictions);
+    printf("ZZZ TOTAL_TAGE_MISPREDICTIONS %d\n", tage_mispredictions+warm_misp);
     printf("ZZZ BIM_MPKI %f\n", (double)bim_mispredictions / inst * 1000);
     printf("ZZZ TAGE_MPKI %f\n", (double)tage_mispredictions / inst * 1000);
+    printf("ZZZ TAGE_FT_MPKI %f\n", (double)(tage_mispredictions + first_time_misses) / inst * 1000);
 
 }
 
@@ -123,20 +132,34 @@ uint8_t O3_CPU::predict_branch(uint64_t ip)
 void O3_CPU::last_branch_result(uint64_t ip, uint64_t branch_target, uint8_t taken, uint8_t branch_type)
 // void O3_CPU::last_branch_result(uint64_t PC, uint8_t taken, uint64_t branch_target, uint8_t branch_type)
 {
+    // Reset stats after warmup
+    if (warmup != _warmup) {
+        _warmup = warmup;
+        brpred->setState(warmup);
+        // brpred->PrintStat(5000000);
+        bim_mispredictions = 0;
+        warm_misp = tage_mispredictions;
+        tage_mispredictions = 0;
+        first_time_misses = 0;
+        brpred->resetStats();
+    }
+
+
     OpType opType = convertBrType(branch_type);
     if (branch_type == BRANCH_CONDITIONAL) {
         if (observedTaken) {
-            brpred->UpdatePredictor(ip, opType, taken, tage_prediction,
-                                    branch_target);
+            brpred->UpdatePredictor(ip, taken, tage_prediction, branch_target);
             // printf("PC: %llx type: %x outcome: %d pred: %d\n", ip, (UINT32)opType, taken, prediction);
 
 
         } else {
             brpred->FirstTimeUpdate(ip, taken, branch_target);
+            if (taken) {
+                first_time_misses++;
+            }
         }
     } else {
-        brpred->TrackOtherInst(ip, opType, taken,
-                                branch_target);
+        brpred->TrackOtherInst(ip, opType, taken, branch_target);
     }
     bim_last_branch_result(ip, branch_target, taken, branch_type);
 
@@ -155,10 +178,18 @@ void O3_CPU::last_branch_result(uint64_t ip, uint64_t branch_target, uint8_t tak
             }
         }
     }
-
 }
 
 
 void O3_CPU::tick_branch_predictor(int inst) {
     brpred->tick();
+}
+
+void O3_CPU::btb_miss() {
+    brpred->btbMiss();
+}
+
+
+void O3_CPU::branch_commit() {
+    brpred->commit();
 }

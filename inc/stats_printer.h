@@ -31,6 +31,8 @@ class plain_printer
   void print(O3_CPU::stats_type);
   void print(CACHE::stats_type, int inst=1);
   void print(DRAM_CHANNEL::stats_type);
+  void print(cache_queue_stats stats);
+
 
   template <typename T>
   void print(std::vector<T> stats_list)

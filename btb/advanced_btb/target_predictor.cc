@@ -76,10 +76,13 @@ constexpr std::array<std::pair<std::string_view, std::size_t>, 6> types{
     // delete brpred;
     // printf("ZZZ Num_unique_taken_branches %lu\n", takenPCs.size());
 
-
+    int total_misses = 0;
     for (auto [str, idx] : types) {
       fmt::print("ZZZ {}_BTB_MISS {}\n", str, btb_misses[idx]);
       fmt::print("ZZZ {}_BTB_MPKI {:.3}\n", str, btb_misses[idx] * 1000.0 / (double)inst);
+      total_misses += btb_misses[idx];
     }
+    printf("ZZZ TOTAL_BTB_MISS %i\n", total_misses);
+    printf("ZZZ TOTAL_BTB_MPKI %.3f\n", total_misses * 1000.0 / (double)inst);
 
 }

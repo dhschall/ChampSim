@@ -23,6 +23,7 @@
 #include <functional>
 #include <limits>
 #include <vector>
+#include <string>
 
 #include <string_view>
 
@@ -45,6 +46,7 @@ namespace champsim
 {
 
 struct cache_queue_stats {
+  std::string name;
   uint64_t RQ_ACCESS = 0;
   uint64_t RQ_MERGED = 0;
   uint64_t RQ_FULL = 0;
@@ -99,6 +101,7 @@ class channel
   template <typename R>
   bool do_add_queue(R& queue, std::size_t queue_size, const typename R::value_type& packet);
 
+
   std::size_t RQ_SIZE = std::numeric_limits<std::size_t>::max();
   std::size_t PQ_SIZE = std::numeric_limits<std::size_t>::max();
   std::size_t WQ_SIZE = std::numeric_limits<std::size_t>::max();
@@ -113,10 +116,11 @@ public:
   std::deque<request_type> RQ{}, PQ{}, WQ{};
   std::deque<response_type> returned{};
 
+  std::string name;
   stats_type sim_stats{}, roi_stats{};
 
   channel() = default;
-  channel(std::size_t rq_size, std::size_t pq_size, std::size_t wq_size, unsigned offset_bits, bool match_offset);
+  channel(std::string name, std::size_t rq_size, std::size_t pq_size, std::size_t wq_size, unsigned offset_bits, bool match_offset);
 
   bool add_rq(const request_type& packet);
   bool add_wq(const request_type& packet);

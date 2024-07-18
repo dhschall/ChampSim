@@ -24,6 +24,7 @@
 
 #include "cache.h"
 #include "dram_controller.h"
+#include "channel.h"
 #include "ooo_cpu.h"
 #include <string_view>
 
@@ -44,6 +45,7 @@ struct phase_stats {
   std::vector<O3_CPU::stats_type> roi_cpu_stats, sim_cpu_stats;
   std::vector<CACHE::stats_type> roi_cache_stats, sim_cache_stats;
   std::vector<DRAM_CHANNEL::stats_type> roi_dram_stats, sim_dram_stats;
+  std::vector<cache_queue_stats> roi_queue_stats, sim_queue_stats;
 };
 
 } // namespace champsim
